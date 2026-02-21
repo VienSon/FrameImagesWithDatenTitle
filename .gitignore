@@ -1,0 +1,26 @@
+# macOS / editor
+.DS_Store
+
+# Python environments / caches
+venv/
+venv-gui/
+venv-tk/
+__pycache__/
+*.pyc
+
+# Runtime/output folders
+dist/
+framed/
+
+# SwiftPM / Xcode build artifacts
+FrameMacApp/.build/
+FrameMacApp/.swiftpm/
+FrameMacApp/DerivedData/
+FrameMacApp/xcuserdata/
+
+# Generic Xcode noise
+DerivedData/
+xcuserdata/
+
+# Credentials
+.netrc
