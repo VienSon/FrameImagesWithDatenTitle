@@ -10,6 +10,8 @@ from tkinter import filedialog, messagebox, ttk
 from frame_auto_date_title import process_folder, read_exif_date, read_title
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".tif", ".tiff", ".png"}
+META_BATCH_SIZE = 40
+QUEUE_MESSAGES_PER_TICK = 120
 
 
 class FrameApp:
@@ -21,6 +23,9 @@ class FrameApp:
         self.messages: queue.Queue[tuple[str, object]] = queue.Queue()
         self.worker_thread: threading.Thread | None = None
         self.scan_thread: threading.Thread | None = None
+        self.edit_entry: ttk.Entry | None = None
+        self.edit_row: str | None = None
+        self.edit_col: str | None = None
 
         self.input_var = tk.StringVar(value=str(Path.cwd() / "photo"))
         self.output_var = tk.StringVar(value=str(Path.cwd() / "framed"))
@@ -32,6 +37,8 @@ class FrameApp:
         self.progress_var = tk.DoubleVar(value=0.0)
         self.status_var = tk.StringVar(value="Ready")
         self.image_count_var = tk.StringVar(value="Images: 0")
+        self.original_meta: dict[str, tuple[str, str]] = {}
+        self.edited_meta: dict[str, tuple[str, str]] = {}
 
         self._build_ui()
         self.root.after(100, self._poll_messages)
@@ -93,23 +100,35 @@ class FrameApp:
         self.meta_table.column("capture_date", width=120, anchor="w")
         self.meta_table.column("title", width=420, anchor="w")
         self.meta_table.grid(row=5, column=0, columnspan=4, sticky="nsew")
+        self.meta_table.bind("<Double-1>", self._on_meta_double_click)
 
         meta_scroll = ttk.Scrollbar(main, orient="vertical", command=self.meta_table.yview)
         self.meta_table.configure(yscrollcommand=meta_scroll.set)
         meta_scroll.grid(row=5, column=4, sticky="ns")
 
-        ttk.Label(main, text="Log").grid(row=6, column=0, columnspan=4, sticky="w", pady=(12, 0))
+        meta_actions = ttk.Frame(main)
+        meta_actions.grid(row=6, column=0, columnspan=4, sticky="w", pady=(8, 0))
+        self.reset_selected_button = ttk.Button(
+            meta_actions,
+            text="Reset Selected",
+            command=self._reset_selected_metadata,
+        )
+        self.reset_selected_button.pack(side=tk.LEFT)
+        self.reset_all_button = ttk.Button(meta_actions, text="Reset All", command=self._reset_all_metadata)
+        self.reset_all_button.pack(side=tk.LEFT, padx=(8, 0))
+
+        ttk.Label(main, text="Log").grid(row=7, column=0, columnspan=4, sticky="w", pady=(12, 0))
         self.log = tk.Text(main, wrap="word", height=12, state="disabled")
-        self.log.grid(row=7, column=0, columnspan=4, sticky="nsew")
+        self.log.grid(row=8, column=0, columnspan=4, sticky="nsew")
 
         scroll = ttk.Scrollbar(main, orient="vertical", command=self.log.yview)
         self.log.configure(yscrollcommand=scroll.set)
-        scroll.grid(row=7, column=4, sticky="ns")
+        scroll.grid(row=8, column=4, sticky="ns")
 
         main.columnconfigure(1, weight=1)
         main.columnconfigure(3, weight=0)
         main.rowconfigure(5, weight=2)
-        main.rowconfigure(7, weight=1)
+        main.rowconfigure(8, weight=1)
         params.columnconfigure(1, weight=1)
         params.columnconfigure(3, weight=1)
 
@@ -174,7 +193,7 @@ class FrameApp:
 
         self.worker_thread = threading.Thread(
             target=self._worker,
-            args=(input_dir, output_dir, border, bottom, pad, date_font, title_font),
+            args=(input_dir, output_dir, border, bottom, pad, date_font, title_font, dict(self.edited_meta)),
             daemon=True,
         )
         self.worker_thread.start()
@@ -188,6 +207,7 @@ class FrameApp:
         pad: int,
         date_font: int,
         title_font: int,
+        edited_meta: dict[str, tuple[str, str]],
     ) -> None:
         def progress_cb(done: int, total: int, _: Path | None) -> None:
             self.messages.put(("progress", (done, total)))
@@ -196,6 +216,9 @@ class FrameApp:
             self.messages.put(("log", msg))
 
         try:
+            overrides: dict[Path, tuple[str, str]] = {}
+            for filename, values in edited_meta.items():
+                overrides[input_dir / filename] = values
             success, total = process_folder(
                 in_dir=input_dir,
                 out_dir=output_dir,
@@ -204,6 +227,7 @@ class FrameApp:
                 pad_px=pad,
                 font_size_date=date_font,
                 font_size_title=title_font,
+                metadata_overrides=overrides,
                 progress_cb=progress_cb,
                 log_cb=log_cb,
             )
@@ -214,6 +238,9 @@ class FrameApp:
     def _clear_metadata_table(self) -> None:
         for item in self.meta_table.get_children():
             self.meta_table.delete(item)
+        self.original_meta.clear()
+        self.edited_meta.clear()
+        self._destroy_editor()
 
     def _start_metadata_scan(self) -> None:
         if self.scan_thread and self.scan_thread.is_alive():
@@ -239,21 +266,30 @@ class FrameApp:
             files = [p for p in sorted(input_dir.iterdir()) if p.suffix.lower() in IMAGE_EXTENSIONS]
             total = len(files)
             self.messages.put(("meta_total", total))
+            batch: list[tuple[str, str, str]] = []
             for idx, p in enumerate(files, start=1):
                 date_str = read_exif_date(p) or ""
                 title = read_title(p) or ""
-                self.messages.put(("meta_row", (p.name, date_str, title)))
-                self.messages.put(("meta_progress", (idx, total)))
+                batch.append((p.name, date_str, title))
+                if len(batch) >= META_BATCH_SIZE:
+                    self.messages.put(("meta_batch", batch))
+                    batch = []
+                if idx % META_BATCH_SIZE == 0 or idx == total:
+                    self.messages.put(("meta_progress", (idx, total)))
+            if batch:
+                self.messages.put(("meta_batch", batch))
             self.messages.put(("meta_done", total))
         except Exception as e:
             self.messages.put(("meta_error", str(e)))
 
     def _poll_messages(self) -> None:
-        while True:
+        processed = 0
+        while processed < QUEUE_MESSAGES_PER_TICK:
             try:
                 msg_type, payload = self.messages.get_nowait()
             except queue.Empty:
                 break
+            processed += 1
 
             if msg_type == "log":
                 self._append_log(str(payload))
@@ -284,9 +320,16 @@ class FrameApp:
                 self.image_count_var.set(f"Images: {total}")
                 if total == 0:
                     self.status_var.set("No images found in input folder")
-            elif msg_type == "meta_row":
-                filename, date_str, title = payload  # type: ignore[misc]
-                self.meta_table.insert("", "end", values=(filename, date_str or "-", title or "-"))
+            elif msg_type == "meta_batch":
+                rows = payload  # type: ignore[assignment]
+                for filename, date_str, title in rows:
+                    date_str = date_str or ""
+                    title = title or ""
+                    self.original_meta[str(filename)] = (date_str, title)
+                    row_id = str(filename)
+                    if self.meta_table.exists(row_id):
+                        row_id = f"{filename}__{len(self.original_meta)}"
+                    self.meta_table.insert("", "end", iid=row_id, values=(filename, date_str or "-", title or "-"))
             elif msg_type == "meta_progress":
                 done, total = payload  # type: ignore[misc]
                 self.status_var.set(f"Reading metadata {done}/{total}")
@@ -299,13 +342,90 @@ class FrameApp:
                 self.scan_button.configure(state="normal")
                 self._append_log(f"ERROR: metadata scan failed: {payload}")
 
-        self.root.after(100, self._poll_messages)
+        next_interval_ms = 20 if not self.messages.empty() else 100
+        self.root.after(next_interval_ms, self._poll_messages)
 
     def _append_log(self, text: str) -> None:
         self.log.configure(state="normal")
         self.log.insert("end", text + "\n")
         self.log.see("end")
         self.log.configure(state="disabled")
+
+    def _destroy_editor(self) -> None:
+        if self.edit_entry is not None:
+            self.edit_entry.destroy()
+            self.edit_entry = None
+            self.edit_row = None
+            self.edit_col = None
+
+    def _on_meta_double_click(self, event: tk.Event[tk.Misc]) -> None:
+        self._destroy_editor()
+        row_id = self.meta_table.identify_row(event.y)
+        col_id = self.meta_table.identify_column(event.x)
+        if not row_id or col_id not in {"#2", "#3"}:
+            return
+
+        bbox = self.meta_table.bbox(row_id, col_id)
+        if not bbox:
+            return
+        x, y, width, height = bbox
+        current = self.meta_table.set(row_id, "capture_date" if col_id == "#2" else "title")
+        if current == "-":
+            current = ""
+
+        self.edit_row = row_id
+        self.edit_col = col_id
+        self.edit_entry = ttk.Entry(self.meta_table)
+        self.edit_entry.place(x=x, y=y, width=width, height=height)
+        self.edit_entry.insert(0, current)
+        self.edit_entry.focus_set()
+        self.edit_entry.bind("<Return>", self._commit_meta_edit)
+        self.edit_entry.bind("<Escape>", lambda _e: self._destroy_editor())
+        self.edit_entry.bind("<FocusOut>", self._commit_meta_edit)
+
+    def _commit_meta_edit(self, _event: tk.Event[tk.Misc] | None = None) -> None:
+        if self.edit_entry is None or self.edit_row is None or self.edit_col is None:
+            return
+        value = self.edit_entry.get().strip()
+        filename, cur_date, cur_title = self.meta_table.item(self.edit_row, "values")
+        date_val = value if self.edit_col == "#2" else (cur_date if cur_date != "-" else "")
+        title_val = value if self.edit_col == "#3" else (cur_title if cur_title != "-" else "")
+        self.meta_table.item(
+            self.edit_row,
+            values=(filename, date_val or "-", title_val or "-"),
+        )
+        original = self.original_meta.get(str(filename), ("", ""))
+        if (date_val, title_val) == original:
+            self.edited_meta.pop(str(filename), None)
+        else:
+            self.edited_meta[str(filename)] = (date_val, title_val)
+        self._destroy_editor()
+        self.status_var.set(f"Edited metadata: {len(self.edited_meta)} file(s)")
+
+    def _reset_selected_metadata(self) -> None:
+        selected = self.meta_table.selection()
+        if not selected:
+            return
+        for row_id in selected:
+            values = self.meta_table.item(row_id, "values")
+            if not values:
+                continue
+            filename = str(values[0])
+            original = self.original_meta.get(filename, ("", ""))
+            self.meta_table.item(row_id, values=(filename, original[0] or "-", original[1] or "-"))
+            self.edited_meta.pop(filename, None)
+        self.status_var.set(f"Edited metadata: {len(self.edited_meta)} file(s)")
+
+    def _reset_all_metadata(self) -> None:
+        for row_id in self.meta_table.get_children():
+            values = self.meta_table.item(row_id, "values")
+            if not values:
+                continue
+            filename = str(values[0])
+            original = self.original_meta.get(filename, ("", ""))
+            self.meta_table.item(row_id, values=(filename, original[0] or "-", original[1] or "-"))
+        self.edited_meta.clear()
+        self.status_var.set("All metadata reset to original")
 
 
 def main() -> None:

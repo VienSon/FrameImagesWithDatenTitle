@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+APP_DIR="$SCRIPT_DIR/FrameMacApp"
+
+if [[ ! -d "$APP_DIR" ]]; then
+  echo "Error: SwiftUI app folder not found: $APP_DIR" >&2
+  exit 1
+fi
+
+cd "$APP_DIR"
+swift run
