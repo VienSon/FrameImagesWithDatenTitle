@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+VENV_GUI_PYTHON="$SCRIPT_DIR/venv-gui/bin/python"
+VENV_TK_PYTHON="$SCRIPT_DIR/venv-tk/bin/python"
+VENV_PYTHON="$SCRIPT_DIR/venv/bin/python"
+SCRIPT_PY="$SCRIPT_DIR/frame_gui.py"
+
+if [[ -x "$VENV_GUI_PYTHON" ]]; then
+  PYTHON_BIN="$VENV_GUI_PYTHON"
+elif [[ -x "$VENV_TK_PYTHON" ]]; then
+  PYTHON_BIN="$VENV_TK_PYTHON"
+elif [[ -x "$VENV_PYTHON" ]]; then
+  PYTHON_BIN="$VENV_PYTHON"
+else
+  echo "Error: no usable python found." >&2
+  echo "Expected one of:" >&2
+  echo "  $VENV_GUI_PYTHON" >&2
+  echo "  $VENV_TK_PYTHON" >&2
+  echo "  $VENV_PYTHON" >&2
+  exit 1
+fi
+
+if [[ ! -f "$SCRIPT_PY" ]]; then
+  echo "Error: script not found at $SCRIPT_PY" >&2
+  exit 1
+fi
+
+# Some shells/IDEs force legacy macOS version reporting (10.16 / 16.x),
+# which can make newer Python builds abort at launch.
+unset SYSTEM_VERSION_COMPAT
+
+"$PYTHON_BIN" "$SCRIPT_PY"
