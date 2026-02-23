@@ -240,9 +240,22 @@ def save_with_quality_preserved(
     src_path: Path,
     out_dir: Path,
 ) -> Path:
+    def unique_out_path(name: str) -> Path:
+        candidate = out_dir / name
+        if not candidate.exists():
+            return candidate
+        stem = candidate.stem
+        suffix = candidate.suffix
+        idx = 1
+        while True:
+            alt = out_dir / f"{stem}_{idx}{suffix}"
+            if not alt.exists():
+                return alt
+            idx += 1
+
     suffix = src_path.suffix.lower()
     if suffix in {".jpg", ".jpeg"}:
-        out_path = out_dir / src_path.with_suffix(".jpg").name
+        out_path = unique_out_path(src_path.with_suffix(".jpg").name)
         save_kwargs = {
             "format": "JPEG",
             "quality": 100,
@@ -259,7 +272,7 @@ def save_with_quality_preserved(
         return out_path
 
     if suffix in {".tif", ".tiff"}:
-        out_path = out_dir / src_path.with_suffix(".tif").name
+        out_path = unique_out_path(src_path.with_suffix(".tif").name)
         save_kwargs = {"format": "TIFF", "compression": "tiff_lzw"}
         icc = src_image.info.get("icc_profile")
         if icc:
@@ -268,7 +281,7 @@ def save_with_quality_preserved(
         return out_path
 
     if suffix == ".png":
-        out_path = out_dir / src_path.with_suffix(".png").name
+        out_path = unique_out_path(src_path.with_suffix(".png").name)
         save_kwargs = {"format": "PNG", "compress_level": 1}
         icc = src_image.info.get("icc_profile")
         if icc:
@@ -276,7 +289,7 @@ def save_with_quality_preserved(
         framed.save(out_path, **save_kwargs)
         return out_path
 
-    out_path = out_dir / src_path.with_suffix(".jpg").name
+    out_path = unique_out_path(src_path.with_suffix(".jpg").name)
     framed.save(out_path, format="JPEG", quality=100, subsampling=0, optimize=False)
     return out_path
 
