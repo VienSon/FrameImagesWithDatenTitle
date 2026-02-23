@@ -12,9 +12,21 @@
 		<data>
 		H9GvISztX9UrGzFCQ+vHU9RnVAA=
 		</data>
+		<key>Resources/fonts/Inter-Variable.ttf</key>
+		<data>
+		l9Tzci1ixsxTQL9iIK2j1kyjZ7E=
+		</data>
 		<key>Resources/fonts/JetBrainsMono-Regular.ttf</key>
 		<data>
 		vvJCs22QUXAAfK7VPNagd3Xb+4I=
+		</data>
+		<key>Resources/fonts/NotoSans-Variable.ttf</key>
+		<data>
+		4Uh7KlpbyF3lUtg54GndtfukOyE=
+		</data>
+		<key>Resources/fonts/NotoSerif-Variable.ttf</key>
+		<data>
+		NfAjo38SYxNAOEWsKopzO6rHn4w=
 		</data>
 	</dict>
 	<key>files2</key>
@@ -33,11 +45,32 @@
 			sgt9libdlWssXlWGkq0yix8Z4ydeJ4LbT6B2cNg/NeA=
 			</data>
 		</dict>
+		<key>Resources/fonts/Inter-Variable.ttf</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			KRYKgP9J3cqyyXcRJH4IsfqyekhKMpzouBPYINxVkDE=
+			</data>
+		</dict>
 		<key>Resources/fonts/JetBrainsMono-Regular.ttf</key>
 		<dict>
 			<key>hash2</key>
 			<data>
 			SHFaQuwkLCHp8CaSiR4UfQIimaUuSNXkE+GpQhk//to=
+			</data>
+		</dict>
+		<key>Resources/fonts/NotoSans-Variable.ttf</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			v7e7aRUT8S5zTcNGwDoD94SRJDLX4/qOVu/PkG/oaz0=
+			</data>
+		</dict>
+		<key>Resources/fonts/NotoSerif-Variable.ttf</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			TY5nYUJGVoZwGQgaGgEzbzywhpgmgmmHFAVPwz94JxM=
 			</data>
 		</dict>
 	</dict>
