@@ -27,8 +27,8 @@ struct MetadataRow: Identifiable, Hashable {
 
 struct RenderSettings: Sendable {
     let borderMode: BorderMode
-    let border: Int
-    let bottom: Int
+    let border: Double
+    let bottom: Double
     let pad: Int
     let dateFont: Int
     let titleFont: Int
@@ -304,14 +304,14 @@ enum NativeFrameProcessor {
         let w = cg.width
         let h = cg.height
 
-        let borderInput = max(0, settings.border)
-        let bottomInput = max(0, settings.bottom)
+        let borderInput = max(0.0, settings.border)
+        let bottomInput = max(0.0, settings.bottom)
         let border: Int
         let bottom: Int
         switch settings.borderMode {
         case .pixels:
-            border = borderInput
-            bottom = bottomInput
+            border = max(0, Int(borderInput.rounded()))
+            bottom = max(0, Int(bottomInput.rounded()))
         case .percent:
             border = max(0, Int((Double(w) * Double(borderInput) / 100.0).rounded()))
             bottom = max(0, Int((Double(w) * Double(bottomInput) / 100.0).rounded()))
@@ -741,8 +741,8 @@ final class FrameViewModel: ObservableObject {
             return
         }
 
-        guard let borderVal = Int(border),
-              let bottomVal = Int(bottom),
+        guard let borderVal = Double(border),
+              let bottomVal = Double(bottom),
               let padVal = Int(pad),
               let dateFontVal = Int(dateFont),
               let titleFontVal = Int(titleFont),
@@ -1066,65 +1066,29 @@ struct ContentView: View {
     @StateObject private var vm = FrameViewModel()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            inputRow
-            outputRow
-            settingsRow
-            presetRow
-            runRow
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.97, green: 0.98, blue: 0.99),
+                    Color(red: 0.95, green: 0.96, blue: 0.98),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
 
-            Table(vm.rows, selection: $vm.selectedRows) {
-                TableColumn("") { row in
-                    Toggle(
-                        "",
-                        isOn: Binding(
-                            get: { vm.isRowSelected(row) },
-                            set: { vm.setRowSelection(row, isSelected: $0) }
-                        )
-                    )
-                    .labelsHidden()
-                }
-                .width(34)
-                TableColumn("Filename") { row in
-                    Text(row.filename)
-                }
-                .width(min: 220, ideal: 280)
-                TableColumn("Capture Date") { row in
-                    if let idx = vm.rows.firstIndex(where: { $0.id == row.id }) {
-                        TextField("YYYY-MM-DD", text: $vm.rows[idx].captureDate)
-                    } else {
-                        Text(row.captureDate)
-                    }
-                }
-                .width(min: 140, ideal: 160)
-                TableColumn("Title") { row in
-                    if let idx = vm.rows.firstIndex(where: { $0.id == row.id }) {
-                        TextField("Title", text: $vm.rows[idx].title)
-                    } else {
-                        Text(row.title)
-                    }
-                }
-                .width(min: 280, ideal: 420)
-                TableColumn("Edited") { row in
-                    Text(row.isEdited ? "Yes" : "")
-                }
-                .width(60)
-            }
-            .frame(minHeight: 280)
-
-            resetRow
-
-            Text("Log").font(.headline)
             ScrollView {
-                Text(vm.logs.isEmpty ? "No logs yet." : vm.logs)
-                    .font(.system(.caption, design: .monospaced))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
+                VStack(alignment: .leading, spacing: 14) {
+                    headerSection
+                    pathSection
+                    settingsSection
+                    presetSection
+                    filesSection
+                    logSection
+                }
+                .padding(16)
             }
-            .background(Color(NSColor.textBackgroundColor))
-            .frame(minHeight: 140)
         }
-        .padding(14)
         .onChange(of: vm.inputDir) { _ in
             vm.saveLocationPreferences()
         }
@@ -1136,101 +1100,210 @@ struct ContentView: View {
         }
     }
 
-    private var inputRow: some View {
-        HStack {
-            Text("Input Folder")
-            TextField("Input folder", text: $vm.inputDir)
-            Button("Browse") { vm.chooseInputDir() }
-            Button("Load List") { Task { await vm.scanMetadata() } }
-                .disabled(vm.isScanning || vm.isRunning)
-        }
-    }
-
-    private var outputRow: some View {
-        HStack {
-            Text("Output Folder")
-            TextField("Output folder", text: $vm.outputDir)
-            Button("Browse") { vm.chooseOutputDir() }
-        }
-    }
-
-    private var settingsRow: some View {
-        HStack(spacing: 12) {
-            Picker("Border Mode", selection: $vm.borderMode) {
-                ForEach(BorderMode.allCases) { mode in
-                    Text(mode.displayName).tag(mode)
-                }
+    private var headerSection: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Frame Studio")
+                    .font(.system(size: 27, weight: .semibold))
+                Text("Batch frame images with editable metadata and clean typography")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
-            .pickerStyle(.segmented)
-            .frame(width: 200)
-            labeledField("Border", text: $vm.border, unit: vm.borderMode.unitLabel)
-            labeledField("Bottom", text: $vm.bottom, unit: vm.borderMode.unitLabel)
-            Button("Reset \(vm.borderMode.displayName)") { vm.resetBorderForCurrentMode() }
-            labeledField("Padding", text: $vm.pad)
-            labeledField("Date Font", text: $vm.dateFont)
-            labeledField("Title Font", text: $vm.titleFont)
-            Picker("Title Typeface", selection: $vm.titleFontChoice) {
-                ForEach(TitleFontChoice.allCases) { choice in
-                    Text(choice.displayName).tag(choice)
-                }
-            }
-            .frame(width: 200)
-        }
-    }
 
-    private var presetRow: some View {
-        HStack(spacing: 12) {
-            TextField("Setting name", text: $vm.presetName)
-                .frame(width: 170)
-            Button("Save Setting") { vm.saveCurrentSettingsAsPreset() }
-                .disabled(vm.presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-            Picker("Saved Settings", selection: $vm.selectedPresetName) {
-                Text("Select").tag("")
-                ForEach(vm.presetNames, id: \.self) { name in
-                    Text(name).tag(name)
-                }
-            }
-            .frame(width: 220)
-
-            Button("Load") { vm.loadSelectedPreset() }
-                .disabled(vm.selectedPresetName.isEmpty)
-            Button("Delete") { vm.deleteSelectedPreset() }
-                .disabled(vm.selectedPresetName.isEmpty)
-        }
-    }
-
-    private var runRow: some View {
-        HStack {
-            Button("Run") { Task { await vm.runProcessing() } }
-                .disabled(vm.isRunning || vm.isScanning)
-            ProgressView(value: vm.progress)
-                .frame(width: 220)
-            Text(vm.status).font(.caption)
             Spacer()
-            Text("Images: \(vm.rows.count)")
-            Text("Selected: \(vm.selectedRows.count)")
-            Text("Edited: \(vm.editedCount)")
+
+            VStack(alignment: .trailing, spacing: 8) {
+                Button("Run Processing") {
+                    Task { await vm.runProcessing() }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(vm.isRunning || vm.isScanning)
+
+                ProgressView(value: vm.progress)
+                    .frame(width: 230)
+                Text(vm.status)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
-    private var resetRow: some View {
-        HStack {
-            Button(vm.selectAllButtonTitle) { vm.toggleSelectAll() }
-                .disabled(vm.rows.isEmpty || vm.isRunning)
-            Button("Reverse Selected Edited Files") { vm.reverseSelectedEditedFiles() }
-                .disabled(vm.selectedRows.isEmpty || vm.isRunning)
-            Button("Reset All") { vm.resetAll() }
-                .disabled(vm.rows.isEmpty || vm.isRunning)
+    private var pathSection: some View {
+        card("Locations") {
+            VStack(spacing: 10) {
+                folderRow(
+                    label: "Input",
+                    text: $vm.inputDir,
+                    browseAction: vm.chooseInputDir,
+                    trailingButtonTitle: "Load Files",
+                    trailingAction: { Task { await vm.scanMetadata() } },
+                    trailingDisabled: vm.isScanning || vm.isRunning
+                )
+                folderRow(
+                    label: "Output",
+                    text: $vm.outputDir,
+                    browseAction: vm.chooseOutputDir,
+                    trailingButtonTitle: nil,
+                    trailingAction: nil,
+                    trailingDisabled: false
+                )
+            }
+        }
+    }
+
+    private var settingsSection: some View {
+        card("Frame & Typography") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 10) {
+                    Text("Border Mode")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Picker("Border Mode", selection: $vm.borderMode) {
+                        ForEach(BorderMode.allCases) { mode in
+                            Text(mode.displayName).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 220)
+
+                    Button("Reset \(vm.borderMode.displayName)") { vm.resetBorderForCurrentMode() }
+                        .buttonStyle(.bordered)
+                    Spacer()
+                }
+
+                HStack(spacing: 12) {
+                    labeledField("Border", text: $vm.border, unit: vm.borderMode.unitLabel)
+                    labeledField("Bottom", text: $vm.bottom, unit: vm.borderMode.unitLabel)
+                    labeledField("Padding", text: $vm.pad)
+                    labeledField("Date Font", text: $vm.dateFont)
+                    labeledField("Title Font", text: $vm.titleFont)
+                    Spacer()
+                    Picker("Title Typeface", selection: $vm.titleFontChoice) {
+                        ForEach(TitleFontChoice.allCases) { choice in
+                            Text(choice.displayName).tag(choice)
+                        }
+                    }
+                    .frame(width: 220)
+                }
+            }
+        }
+    }
+
+    private var presetSection: some View {
+        card("Saved Settings") {
+            HStack(spacing: 12) {
+                TextField("Setting name", text: $vm.presetName)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 190)
+                Button("Save Current") { vm.saveCurrentSettingsAsPreset() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(vm.presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                Picker("Saved Settings", selection: $vm.selectedPresetName) {
+                    Text("Select").tag("")
+                    ForEach(vm.presetNames, id: \.self) { name in
+                        Text(name).tag(name)
+                    }
+                }
+                .frame(width: 240)
+
+                Button("Load") { vm.loadSelectedPreset() }
+                    .buttonStyle(.bordered)
+                    .disabled(vm.selectedPresetName.isEmpty)
+                Button("Delete") { vm.deleteSelectedPreset() }
+                    .buttonStyle(.bordered)
+                    .disabled(vm.selectedPresetName.isEmpty)
+
+                Spacer()
+            }
+        }
+    }
+
+    private var filesSection: some View {
+        card("Files") {
+            VStack(spacing: 10) {
+                HStack {
+                    statPill("Images", value: vm.rows.count)
+                    statPill("Selected", value: vm.selectedRows.count)
+                    statPill("Edited", value: vm.editedCount)
+                    Spacer()
+                    Button(vm.selectAllButtonTitle) { vm.toggleSelectAll() }
+                        .buttonStyle(.bordered)
+                        .disabled(vm.rows.isEmpty || vm.isRunning)
+                    Button("Reverse Selected Edited") { vm.reverseSelectedEditedFiles() }
+                        .buttonStyle(.bordered)
+                        .disabled(vm.selectedRows.isEmpty || vm.isRunning)
+                    Button("Reset All") { vm.resetAll() }
+                        .buttonStyle(.bordered)
+                        .disabled(vm.rows.isEmpty || vm.isRunning)
+                }
+
+                Table(vm.rows, selection: $vm.selectedRows) {
+                    TableColumn("") { row in
+                        Toggle(
+                            "",
+                            isOn: Binding(
+                                get: { vm.isRowSelected(row) },
+                                set: { vm.setRowSelection(row, isSelected: $0) }
+                            )
+                        )
+                        .labelsHidden()
+                    }
+                    .width(34)
+                    TableColumn("Filename") { row in
+                        Text(row.filename)
+                    }
+                    .width(min: 220, ideal: 320)
+                    TableColumn("Capture Date") { row in
+                        if let idx = vm.rows.firstIndex(where: { $0.id == row.id }) {
+                            TextField("YYYY-MM-DD", text: $vm.rows[idx].captureDate)
+                        } else {
+                            Text(row.captureDate)
+                        }
+                    }
+                    .width(min: 140, ideal: 170)
+                    TableColumn("Title") { row in
+                        if let idx = vm.rows.firstIndex(where: { $0.id == row.id }) {
+                            TextField("Title", text: $vm.rows[idx].title)
+                        } else {
+                            Text(row.title)
+                        }
+                    }
+                    .width(min: 340, ideal: 520)
+                    TableColumn("Edited") { row in
+                        Text(row.isEdited ? "Yes" : "")
+                    }
+                    .width(70)
+                }
+                .frame(minHeight: 300)
+            }
+        }
+    }
+
+    private var logSection: some View {
+        card("Log") {
+            ScrollView {
+                Text(vm.logs.isEmpty ? "No logs yet." : vm.logs)
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+            }
+            .frame(minHeight: 150)
+            .background(Color(NSColor.textBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
     }
 
     private func labeledField(_ label: String, text: Binding<String>, unit: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label).font(.caption)
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
             HStack(spacing: 6) {
                 TextField(label, text: text)
-                    .frame(width: 70)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 84)
                 if let unit {
                     Text(unit)
                         .font(.caption2)
@@ -1238,6 +1311,64 @@ struct ContentView: View {
                 }
             }
         }
+    }
+
+    private func statPill(_ label: String, value: Int) -> some View {
+        HStack(spacing: 6) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("\(value)")
+                .font(.caption.weight(.semibold))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.white.opacity(0.8))
+        .clipShape(Capsule())
+        .overlay(
+            Capsule()
+                .stroke(Color.black.opacity(0.08), lineWidth: 1)
+        )
+    }
+
+    private func folderRow(
+        label: String,
+        text: Binding<String>,
+        browseAction: @escaping () -> Void,
+        trailingButtonTitle: String?,
+        trailingAction: (() -> Void)?,
+        trailingDisabled: Bool
+    ) -> some View {
+        HStack(spacing: 10) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 52, alignment: .leading)
+            TextField("\(label) folder", text: text)
+                .textFieldStyle(.roundedBorder)
+            Button("Browse", action: browseAction)
+                .buttonStyle(.bordered)
+            if let trailingButtonTitle, let trailingAction {
+                Button(trailingButtonTitle, action: trailingAction)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(trailingDisabled)
+            }
+        }
+    }
+
+    private func card<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.headline)
+            content()
+        }
+        .padding(14)
+        .background(Color.white.opacity(0.9))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.black.opacity(0.08), lineWidth: 1)
+        )
     }
 }
 
