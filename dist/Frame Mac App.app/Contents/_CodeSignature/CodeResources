@@ -28,6 +28,10 @@
 		<data>
 		NfAjo38SYxNAOEWsKopzO6rHn4w=
 		</data>
+		<key>Resources/fonts/SourceSerif4-Regular.ttf</key>
+		<data>
+		ADeFO9kg+itZSKEIS9bja90Mb4Q=
+		</data>
 	</dict>
 	<key>files2</key>
 	<dict>
@@ -71,6 +75,13 @@
 			<key>hash2</key>
 			<data>
 			TY5nYUJGVoZwGQgaGgEzbzywhpgmgmmHFAVPwz94JxM=
+			</data>
+		</dict>
+		<key>Resources/fonts/SourceSerif4-Regular.ttf</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			pRfDRPz7tBImt8SbshtnVVTMZ9wqE4euHZVmtxDQ16s=
 			</data>
 		</dict>
 	</dict>

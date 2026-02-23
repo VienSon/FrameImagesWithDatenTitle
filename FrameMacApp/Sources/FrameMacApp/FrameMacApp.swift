@@ -32,6 +32,7 @@ struct RenderSettings: Sendable {
     let pad: Int
     let dateFont: Int
     let titleFont: Int
+    let titleFontChoice: TitleFontChoice
 }
 
 struct ProcessSummary: Sendable {
@@ -40,7 +41,7 @@ struct ProcessSummary: Sendable {
     var failed: Int { total - success }
 }
 
-enum BorderMode: String, CaseIterable, Identifiable, Sendable {
+enum BorderMode: String, CaseIterable, Identifiable, Sendable, Codable {
     case pixels
     case percent
 
@@ -63,6 +64,64 @@ enum BorderMode: String, CaseIterable, Identifiable, Sendable {
             return "%"
         }
     }
+}
+
+enum TitleFontChoice: String, CaseIterable, Identifiable, Sendable, Codable {
+    case inter
+    case notoSans
+    case notoSerif
+    case sourceSerif4
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .inter:
+            return "Inter Regular"
+        case .notoSans:
+            return "NotoSans Regular"
+        case .notoSerif:
+            return "NotoSerif Regular"
+        case .sourceSerif4:
+            return "Source Serif 4 Regular"
+        }
+    }
+
+    var fileName: String {
+        switch self {
+        case .inter:
+            return "Inter-Variable.ttf"
+        case .notoSans:
+            return "NotoSans-Variable.ttf"
+        case .notoSerif:
+            return "NotoSerif-Variable.ttf"
+        case .sourceSerif4:
+            return "SourceSerif4-Regular.ttf"
+        }
+    }
+
+    var fallbackPostScriptName: String {
+        switch self {
+        case .inter:
+            return "HelveticaNeue"
+        case .notoSans:
+            return "Helvetica"
+        case .notoSerif:
+            return "TimesNewRomanPSMT"
+        case .sourceSerif4:
+            return "TimesNewRomanPSMT"
+        }
+    }
+}
+
+struct SavedSettingPreset: Codable {
+    let borderMode: BorderMode
+    let border: String
+    let bottom: String
+    let pad: String
+    let dateFont: String
+    let titleFont: String
+    let titleFontChoice: TitleFontChoice
 }
 
 enum NativeFrameProcessor {
@@ -263,7 +322,11 @@ enum NativeFrameProcessor {
         let titleTrimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let dateFont = loadFont(fileName: "JetBrainsMono-Regular.ttf", size: CGFloat(max(1, settings.dateFont)), fallbackName: "Menlo")
-        let titleFont = loadFont(fileName: "CormorantGaramond-Regular.ttf", size: CGFloat(max(1, settings.titleFont)), fallbackName: "TimesNewRomanPSMT")
+        let titleFont = loadFont(
+            fileName: settings.titleFontChoice.fileName,
+            size: CGFloat(max(1, settings.titleFont)),
+            fallbackName: settings.titleFontChoice.fallbackPostScriptName
+        )
 
         let textMaxW = max(1, w - (pad * 2))
         let gap = max(4, Int(Double(max(1, settings.titleFont)) * 0.35))
@@ -560,6 +623,8 @@ final class FrameViewModel: ObservableObject {
     private static let bottomPixelsKey = "frame.bottomPixels"
     private static let borderPercentKey = "frame.borderPercent"
     private static let bottomPercentKey = "frame.bottomPercent"
+    private static let titleFontChoiceKey = "frame.titleFontChoice"
+    private static let namedSettingsKey = "frame.namedSettings"
 
     @Published var inputDir: String
     @Published var outputDir: String
@@ -575,6 +640,12 @@ final class FrameViewModel: ObservableObject {
     @Published var pad: String = defaultPadding
     @Published var dateFont: String = defaultDateFont
     @Published var titleFont: String = defaultTitleFont
+    @Published var titleFontChoice: TitleFontChoice = .inter {
+        didSet { persistPathsAndSettings() }
+    }
+    @Published var presetName: String = ""
+    @Published var selectedPresetName: String = ""
+    @Published private(set) var presetNames: [String] = []
 
     @Published var rows: [MetadataRow] = []
     @Published var selectedRows: Set<String> = []
@@ -583,6 +654,7 @@ final class FrameViewModel: ObservableObject {
     @Published var logs: String = ""
     @Published var isScanning = false
     @Published var isRunning = false
+    private var namedSettings: [String: SavedSettingPreset] = [:]
 
     init() {
         let fm = FileManager.default
@@ -595,6 +667,10 @@ final class FrameViewModel: ObservableObject {
         if let modeRaw = defaults.string(forKey: Self.borderModeKey),
            let mode = BorderMode(rawValue: modeRaw) {
             borderMode = mode
+        }
+        if let titleFontChoiceRaw = defaults.string(forKey: Self.titleFontChoiceKey),
+           let choice = TitleFontChoice(rawValue: titleFontChoiceRaw) {
+            titleFontChoice = choice
         }
 
         let savedBorderPx = defaults.string(forKey: Self.borderPixelsKey) ?? Self.defaultBorderPixels
@@ -609,6 +685,8 @@ final class FrameViewModel: ObservableObject {
             border = savedBorderPercent
             bottom = savedBottomPercent
         }
+
+        loadNamedSettings()
     }
 
     func chooseInputDir() {
@@ -687,7 +765,8 @@ final class FrameViewModel: ObservableObject {
             bottom: bottomVal,
             pad: padVal,
             dateFont: dateFontVal,
-            titleFont: titleFontVal
+            titleFont: titleFontVal,
+            titleFontChoice: titleFontChoice
         )
 
         let selectedFilenames = Set(
@@ -832,6 +911,41 @@ final class FrameViewModel: ObservableObject {
         persistPathsAndSettings()
     }
 
+    func saveCurrentSettingsAsPreset() {
+        let name = presetName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            status = "Preset name is required"
+            return
+        }
+
+        namedSettings[name] = currentPreset()
+        saveNamedSettings()
+        presetName = ""
+        selectedPresetName = name
+        status = "Saved setting: \(name)"
+    }
+
+    func loadSelectedPreset() {
+        guard !selectedPresetName.isEmpty, let preset = namedSettings[selectedPresetName] else {
+            status = "No saved setting selected"
+            return
+        }
+
+        applyPreset(preset)
+        persistPathsAndSettings()
+        status = "Loaded setting: \(selectedPresetName)"
+    }
+
+    func deleteSelectedPreset() {
+        guard !selectedPresetName.isEmpty else {
+            status = "No saved setting selected"
+            return
+        }
+        namedSettings.removeValue(forKey: selectedPresetName)
+        saveNamedSettings()
+        status = "Deleted setting"
+    }
+
     var selectAllButtonTitle: String {
         (selectedRows.count == rows.count && !rows.isEmpty) ? "Deselect All" : "Select All"
     }
@@ -872,6 +986,7 @@ final class FrameViewModel: ObservableObject {
         defaults.set(inputDir, forKey: Self.inputDirKey)
         defaults.set(outputDir, forKey: Self.outputDirKey)
         defaults.set(borderMode.rawValue, forKey: Self.borderModeKey)
+        defaults.set(titleFontChoice.rawValue, forKey: Self.titleFontChoiceKey)
 
         if borderMode == .pixels {
             defaults.set(border, forKey: Self.borderPixelsKey)
@@ -880,6 +995,60 @@ final class FrameViewModel: ObservableObject {
             defaults.set(border, forKey: Self.borderPercentKey)
             defaults.set(bottom, forKey: Self.bottomPercentKey)
         }
+    }
+
+    private func currentPreset() -> SavedSettingPreset {
+        SavedSettingPreset(
+            borderMode: borderMode,
+            border: border,
+            bottom: bottom,
+            pad: pad,
+            dateFont: dateFont,
+            titleFont: titleFont,
+            titleFontChoice: titleFontChoice
+        )
+    }
+
+    private func applyPreset(_ preset: SavedSettingPreset) {
+        borderMode = preset.borderMode
+        border = preset.border
+        bottom = preset.bottom
+        pad = preset.pad
+        dateFont = preset.dateFont
+        titleFont = preset.titleFont
+        titleFontChoice = preset.titleFontChoice
+    }
+
+    private func loadNamedSettings() {
+        let defaults = UserDefaults.standard
+        guard let data = defaults.data(forKey: Self.namedSettingsKey) else {
+            namedSettings = [:]
+            presetNames = []
+            selectedPresetName = ""
+            return
+        }
+
+        if let decoded = try? JSONDecoder().decode([String: SavedSettingPreset].self, from: data) {
+            namedSettings = decoded
+            presetNames = decoded.keys.sorted()
+            selectedPresetName = presetNames.first ?? ""
+        } else {
+            namedSettings = [:]
+            presetNames = []
+            selectedPresetName = ""
+        }
+    }
+
+    private func saveNamedSettings() {
+        let defaults = UserDefaults.standard
+        if let data = try? JSONEncoder().encode(namedSettings) {
+            defaults.set(data, forKey: Self.namedSettingsKey)
+        }
+        presetNames = namedSettings.keys.sorted()
+        if !selectedPresetName.isEmpty && namedSettings[selectedPresetName] != nil {
+            return
+        }
+        selectedPresetName = presetNames.first ?? ""
     }
 
     private func pickDirectory(startingAt path: String) -> String? {
@@ -901,6 +1070,7 @@ struct ContentView: View {
             inputRow
             outputRow
             settingsRow
+            presetRow
             runRow
 
             Table(vm.rows, selection: $vm.selectedRows) {
@@ -999,6 +1169,34 @@ struct ContentView: View {
             labeledField("Padding", text: $vm.pad)
             labeledField("Date Font", text: $vm.dateFont)
             labeledField("Title Font", text: $vm.titleFont)
+            Picker("Title Typeface", selection: $vm.titleFontChoice) {
+                ForEach(TitleFontChoice.allCases) { choice in
+                    Text(choice.displayName).tag(choice)
+                }
+            }
+            .frame(width: 200)
+        }
+    }
+
+    private var presetRow: some View {
+        HStack(spacing: 12) {
+            TextField("Setting name", text: $vm.presetName)
+                .frame(width: 170)
+            Button("Save Setting") { vm.saveCurrentSettingsAsPreset() }
+                .disabled(vm.presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+            Picker("Saved Settings", selection: $vm.selectedPresetName) {
+                Text("Select").tag("")
+                ForEach(vm.presetNames, id: \.self) { name in
+                    Text(name).tag(name)
+                }
+            }
+            .frame(width: 220)
+
+            Button("Load") { vm.loadSelectedPreset() }
+                .disabled(vm.selectedPresetName.isEmpty)
+            Button("Delete") { vm.deleteSelectedPreset() }
+                .disabled(vm.selectedPresetName.isEmpty)
         }
     }
 
