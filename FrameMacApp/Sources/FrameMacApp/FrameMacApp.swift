@@ -33,6 +33,7 @@ struct RenderSettings: Sendable {
     let dateFont: Int
     let titleFont: Int
     let titleFontChoice: TitleFontChoice
+    let titleFontVariant: TitleFontVariant
     let textLayout: TextLayoutMode
 }
 
@@ -123,7 +124,38 @@ struct SavedSettingPreset: Codable {
     let dateFont: String
     let titleFont: String
     let titleFontChoice: TitleFontChoice
+    let titleFontVariant: TitleFontVariant
     let textLayout: TextLayoutMode
+}
+
+enum TitleFontVariant: String, CaseIterable, Identifiable, Sendable, Codable {
+    case regular
+    case semiBold
+    case bold
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .regular:
+            return "Regular"
+        case .semiBold:
+            return "SemiBold"
+        case .bold:
+            return "Bold"
+        }
+    }
+
+    var weightValue: Double {
+        switch self {
+        case .regular:
+            return 400
+        case .semiBold:
+            return 600
+        case .bold:
+            return 700
+        }
+    }
 }
 
 enum TextLayoutMode: String, CaseIterable, Identifiable, Sendable, Codable {
@@ -339,11 +371,12 @@ enum NativeFrameProcessor {
         let dateTextTrimmed = dateText.trimmingCharacters(in: .whitespacesAndNewlines)
         let titleTrimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let titleFont = loadFont(
+        var titleFont = loadFont(
             fileName: settings.titleFontChoice.fileName,
             size: CGFloat(max(1, settings.titleFont)),
             fallbackName: settings.titleFontChoice.fallbackPostScriptName
         )
+        titleFont = applyTitleVariant(titleFont, variant: settings.titleFontVariant)
         let dateFont: CTFont
         if settings.textLayout == .row {
             dateFont = titleFont
@@ -547,6 +580,29 @@ enum NativeFrameProcessor {
         return CTFontCreateWithName(fallbackName as CFString, size, nil)
     }
 
+    private static func applyTitleVariant(_ font: CTFont, variant: TitleFontVariant) -> CTFont {
+        guard let axes = CTFontCopyVariationAxes(font) as? [[CFString: Any]] else {
+            return font
+        }
+
+        guard let weightAxis = axes.first(where: {
+            (($0[kCTFontVariationAxisIdentifierKey] as? NSNumber)?.intValue) == 2003265652 // 'wght'
+        }) else {
+            return font
+        }
+
+        guard let axisId = weightAxis[kCTFontVariationAxisIdentifierKey] as? NSNumber else {
+            return font
+        }
+
+        let minValue = (weightAxis[kCTFontVariationAxisMinimumValueKey] as? NSNumber)?.doubleValue ?? 1
+        let maxValue = (weightAxis[kCTFontVariationAxisMaximumValueKey] as? NSNumber)?.doubleValue ?? 1000
+        let clamped = min(max(variant.weightValue, minValue), maxValue)
+        let descriptor = CTFontCopyFontDescriptor(font)
+        let variedDescriptor = CTFontDescriptorCreateCopyWithVariation(descriptor, axisId, CGFloat(clamped))
+        return CTFontCreateWithFontDescriptor(variedDescriptor, CTFontGetSize(font), nil)
+    }
+
     private static func fontsDirectoryURL() -> URL? {
         let fm = FileManager.default
         if let bundled = Bundle.main.resourceURL?.appendingPathComponent("fonts"), fm.fileExists(atPath: bundled.path) {
@@ -689,6 +745,7 @@ final class FrameViewModel: ObservableObject {
     private static let borderPercentKey = "frame.borderPercent"
     private static let bottomPercentKey = "frame.bottomPercent"
     private static let titleFontChoiceKey = "frame.titleFontChoice"
+    private static let titleFontVariantKey = "frame.titleFontVariant"
     private static let namedSettingsKey = "frame.namedSettings"
     private static let textLayoutKey = "frame.textLayout"
 
@@ -707,6 +764,9 @@ final class FrameViewModel: ObservableObject {
     @Published var dateFont: String = defaultDateFont
     @Published var titleFont: String = defaultTitleFont
     @Published var titleFontChoice: TitleFontChoice = .inter {
+        didSet { persistPathsAndSettings() }
+    }
+    @Published var titleFontVariant: TitleFontVariant = .regular {
         didSet { persistPathsAndSettings() }
     }
     @Published var textLayout: TextLayoutMode = .stacked {
@@ -740,6 +800,10 @@ final class FrameViewModel: ObservableObject {
         if let titleFontChoiceRaw = defaults.string(forKey: Self.titleFontChoiceKey),
            let choice = TitleFontChoice(rawValue: titleFontChoiceRaw) {
             titleFontChoice = choice
+        }
+        if let titleFontVariantRaw = defaults.string(forKey: Self.titleFontVariantKey),
+           let variant = TitleFontVariant(rawValue: titleFontVariantRaw) {
+            titleFontVariant = variant
         }
         if let textLayoutRaw = defaults.string(forKey: Self.textLayoutKey),
            let saved = TextLayoutMode(rawValue: textLayoutRaw) {
@@ -840,6 +904,7 @@ final class FrameViewModel: ObservableObject {
             dateFont: dateFontVal,
             titleFont: titleFontVal,
             titleFontChoice: titleFontChoice,
+            titleFontVariant: titleFontVariant,
             textLayout: textLayout
         )
 
@@ -1061,6 +1126,7 @@ final class FrameViewModel: ObservableObject {
         defaults.set(outputDir, forKey: Self.outputDirKey)
         defaults.set(borderMode.rawValue, forKey: Self.borderModeKey)
         defaults.set(titleFontChoice.rawValue, forKey: Self.titleFontChoiceKey)
+        defaults.set(titleFontVariant.rawValue, forKey: Self.titleFontVariantKey)
         defaults.set(textLayout.rawValue, forKey: Self.textLayoutKey)
 
         if borderMode == .pixels {
@@ -1081,6 +1147,7 @@ final class FrameViewModel: ObservableObject {
             dateFont: dateFont,
             titleFont: titleFont,
             titleFontChoice: titleFontChoice,
+            titleFontVariant: titleFontVariant,
             textLayout: textLayout
         )
     }
@@ -1093,6 +1160,7 @@ final class FrameViewModel: ObservableObject {
         dateFont = preset.dateFont
         titleFont = preset.titleFont
         titleFontChoice = preset.titleFontChoice
+        titleFontVariant = preset.titleFontVariant
         textLayout = preset.textLayout
     }
 
@@ -1164,6 +1232,7 @@ struct ContentView: View {
                     logSection
                 }
                 .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .onChange(of: vm.inputDir) { _ in
@@ -1231,44 +1300,72 @@ struct ContentView: View {
 
     private var settingsSection: some View {
         card("Frame & Typography") {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 10) {
-                    Text("Border Mode")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Picker("Border Mode", selection: $vm.borderMode) {
-                        ForEach(BorderMode.allCases) { mode in
-                            Text(mode.displayName).tag(mode)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 14) {
+                    settingGroupLabel("Border Mode") {
+                        Picker("", selection: $vm.borderMode) {
+                            ForEach(BorderMode.allCases) { mode in
+                                Text(mode.displayName).tag(mode)
+                            }
                         }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .frame(width: 240)
                     }
-                    .pickerStyle(.segmented)
-                    .frame(width: 220)
 
-                    Button("Reset \(vm.borderMode.displayName)") { vm.resetBorderForCurrentMode() }
-                        .buttonStyle(.bordered)
-                    Spacer()
-                    Picker("Text Layout", selection: $vm.textLayout) {
-                        ForEach(TextLayoutMode.allCases) { mode in
-                            Text(mode.displayName).tag(mode)
+                    settingGroupLabel("Text Layout") {
+                        Picker("", selection: $vm.textLayout) {
+                            ForEach(TextLayoutMode.allCases) { mode in
+                                Text(mode.displayName).tag(mode)
+                            }
                         }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .frame(width: 240)
                     }
-                    .pickerStyle(.segmented)
-                    .frame(width: 220)
+
+                    settingGroupLabel("Border Reset") {
+                        Button("Reset \(vm.borderMode.displayName)") { vm.resetBorderForCurrentMode() }
+                            .buttonStyle(.bordered)
+                            .frame(width: 140, alignment: .leading)
+                    }
+                    .frame(width: 140, alignment: .leading)
                 }
 
-                HStack(spacing: 12) {
-                    labeledField("Border", text: $vm.border, unit: vm.borderMode.unitLabel)
-                    labeledField("Bottom", text: $vm.bottom, unit: vm.borderMode.unitLabel)
-                    labeledField("Padding", text: $vm.pad)
-                    labeledField("Date Font", text: $vm.dateFont)
-                    labeledField("Title Font", text: $vm.titleFont)
-                    Spacer()
-                    Picker("Title Typeface", selection: $vm.titleFontChoice) {
-                        ForEach(TitleFontChoice.allCases) { choice in
-                            Text(choice.displayName).tag(choice)
+                HStack(alignment: .top, spacing: 12) {
+                    settingGroupLabel("Dimensions & Size") {
+                        HStack(alignment: .top, spacing: 12) {
+                            labeledField("Border", text: $vm.border, unit: vm.borderMode.unitLabel)
+                            labeledField("Bottom", text: $vm.bottom, unit: vm.borderMode.unitLabel)
+                            labeledField("Padding", text: $vm.pad)
+                            labeledField("Date Font", text: $vm.dateFont)
+                            labeledField("Title Font", text: $vm.titleFont)
                         }
                     }
-                    .frame(width: 220)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    settingGroupLabel("Title Typeface") {
+                        Picker("", selection: $vm.titleFontChoice) {
+                            ForEach(TitleFontChoice.allCases) { choice in
+                                Text(choice.displayName).tag(choice)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 240)
+                    }
+                    .frame(width: 240, alignment: .leading)
+
+                    settingGroupLabel("Title Variant") {
+                        Picker("", selection: $vm.titleFontVariant) {
+                            ForEach(TitleFontVariant.allCases) { variant in
+                                Text(variant.displayName).tag(variant)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .frame(width: 240)
+                    }
+                    .frame(width: 240, alignment: .leading)
                 }
             }
         }
@@ -1276,30 +1373,42 @@ struct ContentView: View {
 
     private var presetSection: some View {
         card("Saved Settings") {
-            HStack(spacing: 12) {
-                TextField("Setting name", text: $vm.presetName)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 190)
-                Button("Save Current") { vm.saveCurrentSettingsAsPreset() }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(vm.presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                Picker("Saved Settings", selection: $vm.selectedPresetName) {
-                    Text("Select").tag("")
-                    ForEach(vm.presetNames, id: \.self) { name in
-                        Text(name).tag(name)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 12) {
+                    settingGroupLabel("New Setting Name") {
+                        TextField("e.g. Portrait Soft", text: $vm.presetName)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 220)
                     }
+                    Button("Save Current") { vm.saveCurrentSettingsAsPreset() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(vm.presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .padding(.top, 20)
+
+                    Spacer()
                 }
-                .frame(width: 240)
 
-                Button("Load") { vm.loadSelectedPreset() }
-                    .buttonStyle(.bordered)
-                    .disabled(vm.selectedPresetName.isEmpty)
-                Button("Delete") { vm.deleteSelectedPreset() }
-                    .buttonStyle(.bordered)
-                    .disabled(vm.selectedPresetName.isEmpty)
-
-                Spacer()
+                HStack(alignment: .top, spacing: 12) {
+                    settingGroupLabel("Saved Settings") {
+                        Picker("", selection: $vm.selectedPresetName) {
+                            Text("Select").tag("")
+                            ForEach(vm.presetNames, id: \.self) { name in
+                                Text(name).tag(name)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 260)
+                    }
+                    Button("Load") { vm.loadSelectedPreset() }
+                        .buttonStyle(.bordered)
+                        .disabled(vm.selectedPresetName.isEmpty)
+                        .padding(.top, 20)
+                    Button("Delete") { vm.deleteSelectedPreset() }
+                        .buttonStyle(.bordered)
+                        .disabled(vm.selectedPresetName.isEmpty)
+                        .padding(.top, 20)
+                    Spacer()
+                }
             }
         }
     }
@@ -1385,7 +1494,7 @@ struct ContentView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack(spacing: 6) {
-                TextField(label, text: text)
+                TextField("", text: text)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 84)
                 if let unit {
@@ -1428,7 +1537,7 @@ struct ContentView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(width: 52, alignment: .leading)
-            TextField("\(label) folder", text: text)
+            TextField("", text: text)
                 .textFieldStyle(.roundedBorder)
             Button("Browse", action: browseAction)
                 .buttonStyle(.bordered)
@@ -1453,9 +1562,18 @@ struct ContentView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(Color.black.opacity(0.08), lineWidth: 1)
         )
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func settingGroupLabel<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            content()
+        }
     }
 }
-
 @main
 struct FrameMacApp: App {
     var body: some Scene {
