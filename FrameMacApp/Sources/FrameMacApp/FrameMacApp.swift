@@ -13,7 +13,7 @@ struct MetadataRecord: Sendable {
 }
 
 struct MetadataRow: Identifiable, Hashable {
-    let id = UUID()
+    let id: String
     let filename: String
     var captureDate: String
     var title: String
@@ -26,6 +26,7 @@ struct MetadataRow: Identifiable, Hashable {
 }
 
 struct RenderSettings: Sendable {
+    let borderMode: BorderMode
     let border: Int
     let bottom: Int
     let pad: Int
@@ -37,6 +38,31 @@ struct ProcessSummary: Sendable {
     let success: Int
     let total: Int
     var failed: Int { total - success }
+}
+
+enum BorderMode: String, CaseIterable, Identifiable, Sendable {
+    case pixels
+    case percent
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .pixels:
+            return "Pixels"
+        case .percent:
+            return "Percent"
+        }
+    }
+
+    var unitLabel: String {
+        switch self {
+        case .pixels:
+            return "px"
+        case .percent:
+            return "%"
+        }
+    }
 }
 
 enum NativeFrameProcessor {
@@ -81,10 +107,11 @@ enum NativeFrameProcessor {
         outputDir: URL,
         settings: RenderSettings,
         metadataOverrides: [String: (String, String)],
+        includeFilenames: Set<String>,
         progress: @escaping (_ done: Int, _ total: Int) -> Void,
         log: @escaping (_ line: String) -> Void
     ) throws -> ProcessSummary {
-        let files = try imageFiles(in: inputDir, invalidInputCode: 2)
+        let files = try imageFiles(in: inputDir, invalidInputCode: 2).filter { includeFilenames.contains($0.lastPathComponent) }
         try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
 
         let total = files.count
@@ -218,8 +245,18 @@ enum NativeFrameProcessor {
         let w = cg.width
         let h = cg.height
 
-        let border = max(0, settings.border)
-        let bottom = max(0, settings.bottom)
+        let borderInput = max(0, settings.border)
+        let bottomInput = max(0, settings.bottom)
+        let border: Int
+        let bottom: Int
+        switch settings.borderMode {
+        case .pixels:
+            border = borderInput
+            bottom = bottomInput
+        case .percent:
+            border = max(0, Int((Double(w) * Double(borderInput) / 100.0).rounded()))
+            bottom = max(0, Int((Double(w) * Double(bottomInput) / 100.0).rounded()))
+        }
         let pad = max(0, settings.pad)
 
         let dateTextTrimmed = dateText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -321,22 +358,55 @@ enum NativeFrameProcessor {
 
     private static func outputSpec(srcURL: URL, outDir: URL, suffix: String) -> (URL, String, [CFString: Any]) {
         if suffix == ".jpg" || suffix == ".jpeg" {
-            let out = outDir.appendingPathComponent(srcURL.deletingPathExtension().lastPathComponent + ".jpg")
+            let out = uniqueOutputURL(
+                outDir: outDir,
+                baseName: srcURL.deletingPathExtension().lastPathComponent,
+                ext: "jpg"
+            )
             return (out, UTType.jpeg.identifier, [kCGImageDestinationLossyCompressionQuality: 1.0])
         }
 
         if suffix == ".tif" || suffix == ".tiff" {
-            let out = outDir.appendingPathComponent(srcURL.deletingPathExtension().lastPathComponent + ".tif")
+            let out = uniqueOutputURL(
+                outDir: outDir,
+                baseName: srcURL.deletingPathExtension().lastPathComponent,
+                ext: "tif"
+            )
             return (out, UTType.tiff.identifier, [kCGImagePropertyTIFFCompression: 5])
         }
 
         if suffix == ".png" {
-            let out = outDir.appendingPathComponent(srcURL.deletingPathExtension().lastPathComponent + ".png")
+            let out = uniqueOutputURL(
+                outDir: outDir,
+                baseName: srcURL.deletingPathExtension().lastPathComponent,
+                ext: "png"
+            )
             return (out, UTType.png.identifier, [:])
         }
 
-        let out = outDir.appendingPathComponent(srcURL.deletingPathExtension().lastPathComponent + ".jpg")
+        let out = uniqueOutputURL(
+            outDir: outDir,
+            baseName: srcURL.deletingPathExtension().lastPathComponent,
+            ext: "jpg"
+        )
         return (out, UTType.jpeg.identifier, [kCGImageDestinationLossyCompressionQuality: 1.0])
+    }
+
+    private static func uniqueOutputURL(outDir: URL, baseName: String, ext: String) -> URL {
+        let fm = FileManager.default
+        var candidate = outDir.appendingPathComponent("\(baseName).\(ext)")
+        if !fm.fileExists(atPath: candidate.path) {
+            return candidate
+        }
+
+        var index = 1
+        while true {
+            candidate = outDir.appendingPathComponent("\(baseName)_\(index).\(ext)")
+            if !fm.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+            index += 1
+        }
     }
 
     private static func loadFont(fileName: String, size: CGFloat, fallbackName: String) -> CTFont {
@@ -476,17 +546,38 @@ enum NativeFrameProcessor {
 
 @MainActor
 final class FrameViewModel: ObservableObject {
+    private static let defaultBorderPixels = "80"
+    private static let defaultBottomPixels = "240"
+    private static let defaultBorderPercent = "1"
+    private static let defaultBottomPercent = "5"
+    private static let defaultPadding = "40"
+    private static let defaultDateFont = "60"
+    private static let defaultTitleFont = "80"
+    private static let inputDirKey = "frame.lastInputDir"
+    private static let outputDirKey = "frame.lastOutputDir"
+    private static let borderModeKey = "frame.borderMode"
+    private static let borderPixelsKey = "frame.borderPixels"
+    private static let bottomPixelsKey = "frame.bottomPixels"
+    private static let borderPercentKey = "frame.borderPercent"
+    private static let bottomPercentKey = "frame.bottomPercent"
+
     @Published var inputDir: String
     @Published var outputDir: String
 
-    @Published var border: String = "80"
-    @Published var bottom: String = "240"
-    @Published var pad: String = "40"
-    @Published var dateFont: String = "60"
-    @Published var titleFont: String = "80"
+    @Published var borderMode: BorderMode = .pixels {
+        didSet {
+            syncDisplayedBorderSettings()
+            persistPathsAndSettings()
+        }
+    }
+    @Published var border: String = defaultBorderPixels
+    @Published var bottom: String = defaultBottomPixels
+    @Published var pad: String = defaultPadding
+    @Published var dateFont: String = defaultDateFont
+    @Published var titleFont: String = defaultTitleFont
 
     @Published var rows: [MetadataRow] = []
-    @Published var selectedRows: Set<UUID> = []
+    @Published var selectedRows: Set<String> = []
     @Published var status: String = "Ready"
     @Published var progress: Double = 0.0
     @Published var logs: String = ""
@@ -495,21 +586,35 @@ final class FrameViewModel: ObservableObject {
 
     init() {
         let fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser.path
-        let candidateInput = home + "/Pictures/Frame/photo"
-        let candidateOutput = home + "/Pictures/Frame/framed"
-        if fm.fileExists(atPath: candidateInput) {
-            inputDir = candidateInput
-            outputDir = candidateOutput
+        let defaults = UserDefaults.standard
+        let picturesPath = fm.homeDirectoryForCurrentUser
+            .appendingPathComponent("Pictures")
+            .path
+        inputDir = defaults.string(forKey: Self.inputDirKey) ?? picturesPath
+        outputDir = defaults.string(forKey: Self.outputDirKey) ?? picturesPath
+        if let modeRaw = defaults.string(forKey: Self.borderModeKey),
+           let mode = BorderMode(rawValue: modeRaw) {
+            borderMode = mode
+        }
+
+        let savedBorderPx = defaults.string(forKey: Self.borderPixelsKey) ?? Self.defaultBorderPixels
+        let savedBottomPx = defaults.string(forKey: Self.bottomPixelsKey) ?? Self.defaultBottomPixels
+        let savedBorderPercent = defaults.string(forKey: Self.borderPercentKey) ?? Self.defaultBorderPercent
+        let savedBottomPercent = defaults.string(forKey: Self.bottomPercentKey) ?? Self.defaultBottomPercent
+
+        if borderMode == .pixels {
+            border = savedBorderPx
+            bottom = savedBottomPx
         } else {
-            inputDir = fm.currentDirectoryPath + "/photo"
-            outputDir = fm.currentDirectoryPath + "/framed"
+            border = savedBorderPercent
+            bottom = savedBottomPercent
         }
     }
 
     func chooseInputDir() {
         if let selected = pickDirectory(startingAt: inputDir) {
             inputDir = selected
+            persistPathsAndSettings()
             Task { await scanMetadata() }
         }
     }
@@ -517,6 +622,7 @@ final class FrameViewModel: ObservableObject {
     func chooseOutputDir() {
         if let selected = pickDirectory(startingAt: outputDir) {
             outputDir = selected
+            persistPathsAndSettings()
         }
     }
 
@@ -533,14 +639,13 @@ final class FrameViewModel: ObservableObject {
                 try NativeFrameProcessor.scan(inputDir: URL(fileURLWithPath: inputPath))
             }.value
             rows = records.map {
-                MetadataRow(
+                makeRow(
                     filename: $0.filename,
                     captureDate: $0.captureDate,
-                    title: $0.title,
-                    originalCaptureDate: $0.captureDate,
-                    originalTitle: $0.title
+                    title: $0.title
                 )
             }
+            selectedRows = Set(rows.map(\.id))
             status = "Loaded \(rows.count) image(s)"
         } catch {
             status = "Scan failed: \(error.localizedDescription)"
@@ -553,6 +658,11 @@ final class FrameViewModel: ObservableObject {
     func runProcessing() async {
         guard !isRunning else { return }
 
+        guard !selectedRows.isEmpty else {
+            status = "No files selected"
+            return
+        }
+
         guard let borderVal = Int(border),
               let bottomVal = Int(bottom),
               let padVal = Int(pad),
@@ -563,6 +673,8 @@ final class FrameViewModel: ObservableObject {
             return
         }
 
+        persistPathsAndSettings()
+
         isRunning = true
         progress = 0
         status = "Running..."
@@ -570,6 +682,7 @@ final class FrameViewModel: ObservableObject {
         appendLog("Output: \(outputDir)")
 
         let settings = RenderSettings(
+            borderMode: borderMode,
             border: borderVal,
             bottom: bottomVal,
             pad: padVal,
@@ -577,8 +690,15 @@ final class FrameViewModel: ObservableObject {
             titleFont: titleFontVal
         )
 
+        let selectedFilenames = Set(
+            rows
+                .filter { selectedRows.contains($0.id) }
+                .map(\.filename)
+        )
+
         let overrides = Dictionary(
             uniqueKeysWithValues: rows
+                .filter { selectedRows.contains($0.id) }
                 .filter(\.isEdited)
                 .map { ($0.filename, ($0.captureDate, $0.title)) }
         )
@@ -601,6 +721,7 @@ final class FrameViewModel: ObservableObject {
                             outputDir: output,
                             settings: settings,
                             metadataOverrides: overrides,
+                            includeFilenames: selectedFilenames,
                             progress: { done, total in
                                 continuation.yield(.progress(done, total))
                             },
@@ -650,16 +771,14 @@ final class FrameViewModel: ObservableObject {
         isRunning = false
     }
 
-    func resetSelected() {
+    func reverseSelectedEditedFiles() {
         guard !selectedRows.isEmpty else { return }
         rows = rows.map { row in
-            if selectedRows.contains(row.id) {
-                return MetadataRow(
+            if selectedRows.contains(row.id), row.isEdited {
+                return makeRow(
                     filename: row.filename,
                     captureDate: row.originalCaptureDate,
-                    title: row.originalTitle,
-                    originalCaptureDate: row.originalCaptureDate,
-                    originalTitle: row.originalTitle
+                    title: row.originalTitle
                 )
             }
             return row
@@ -668,15 +787,53 @@ final class FrameViewModel: ObservableObject {
 
     func resetAll() {
         rows = rows.map {
-            MetadataRow(
+            makeRow(
                 filename: $0.filename,
                 captureDate: $0.originalCaptureDate,
-                title: $0.originalTitle,
-                originalCaptureDate: $0.originalCaptureDate,
-                originalTitle: $0.originalTitle
+                title: $0.originalTitle
             )
         }
         selectedRows = []
+    }
+
+    func toggleSelectAll() {
+        if selectedRows.count == rows.count && !rows.isEmpty {
+            selectedRows = []
+        } else {
+            selectedRows = Set(rows.map(\.id))
+        }
+    }
+
+    func isRowSelected(_ row: MetadataRow) -> Bool {
+        selectedRows.contains(row.id)
+    }
+
+    func setRowSelection(_ row: MetadataRow, isSelected: Bool) {
+        if isSelected {
+            selectedRows.insert(row.id)
+        } else {
+            selectedRows.remove(row.id)
+        }
+    }
+
+    func resetBorderForCurrentMode() {
+        switch borderMode {
+        case .pixels:
+            border = Self.defaultBorderPixels
+            bottom = Self.defaultBottomPixels
+        case .percent:
+            border = Self.defaultBorderPercent
+            bottom = Self.defaultBottomPercent
+        }
+        persistPathsAndSettings()
+    }
+
+    func saveLocationPreferences() {
+        persistPathsAndSettings()
+    }
+
+    var selectAllButtonTitle: String {
+        (selectedRows.count == rows.count && !rows.isEmpty) ? "Deselect All" : "Select All"
     }
 
     var editedCount: Int {
@@ -685,6 +842,44 @@ final class FrameViewModel: ObservableObject {
 
     private func appendLog(_ text: String) {
         logs += text + "\n"
+    }
+
+    private func makeRow(filename: String, captureDate: String, title: String) -> MetadataRow {
+        MetadataRow(
+            id: filename,
+            filename: filename,
+            captureDate: captureDate,
+            title: title,
+            originalCaptureDate: captureDate,
+            originalTitle: title
+        )
+    }
+
+    private func syncDisplayedBorderSettings() {
+        let defaults = UserDefaults.standard
+        switch borderMode {
+        case .pixels:
+            border = defaults.string(forKey: Self.borderPixelsKey) ?? Self.defaultBorderPixels
+            bottom = defaults.string(forKey: Self.bottomPixelsKey) ?? Self.defaultBottomPixels
+        case .percent:
+            border = defaults.string(forKey: Self.borderPercentKey) ?? Self.defaultBorderPercent
+            bottom = defaults.string(forKey: Self.bottomPercentKey) ?? Self.defaultBottomPercent
+        }
+    }
+
+    private func persistPathsAndSettings() {
+        let defaults = UserDefaults.standard
+        defaults.set(inputDir, forKey: Self.inputDirKey)
+        defaults.set(outputDir, forKey: Self.outputDirKey)
+        defaults.set(borderMode.rawValue, forKey: Self.borderModeKey)
+
+        if borderMode == .pixels {
+            defaults.set(border, forKey: Self.borderPixelsKey)
+            defaults.set(bottom, forKey: Self.bottomPixelsKey)
+        } else {
+            defaults.set(border, forKey: Self.borderPercentKey)
+            defaults.set(bottom, forKey: Self.bottomPercentKey)
+        }
     }
 
     private func pickDirectory(startingAt path: String) -> String? {
@@ -703,40 +898,23 @@ struct ContentView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Input Folder")
-                TextField("Input folder", text: $vm.inputDir)
-                Button("Browse") { vm.chooseInputDir() }
-                Button("Load List") { Task { await vm.scanMetadata() } }
-                    .disabled(vm.isScanning || vm.isRunning)
-            }
-
-            HStack {
-                Text("Output Folder")
-                TextField("Output folder", text: $vm.outputDir)
-                Button("Browse") { vm.chooseOutputDir() }
-            }
-
-            HStack(spacing: 12) {
-                labeledField("Border", text: $vm.border)
-                labeledField("Bottom", text: $vm.bottom)
-                labeledField("Padding", text: $vm.pad)
-                labeledField("Date Font", text: $vm.dateFont)
-                labeledField("Title Font", text: $vm.titleFont)
-            }
-
-            HStack {
-                Button("Run") { Task { await vm.runProcessing() } }
-                    .disabled(vm.isRunning || vm.isScanning)
-                ProgressView(value: vm.progress)
-                    .frame(width: 220)
-                Text(vm.status).font(.caption)
-                Spacer()
-                Text("Images: \(vm.rows.count)")
-                Text("Edited: \(vm.editedCount)")
-            }
+            inputRow
+            outputRow
+            settingsRow
+            runRow
 
             Table(vm.rows, selection: $vm.selectedRows) {
+                TableColumn("") { row in
+                    Toggle(
+                        "",
+                        isOn: Binding(
+                            get: { vm.isRowSelected(row) },
+                            set: { vm.setRowSelection(row, isSelected: $0) }
+                        )
+                    )
+                    .labelsHidden()
+                }
+                .width(34)
                 TableColumn("Filename") { row in
                     Text(row.filename)
                 }
@@ -764,12 +942,7 @@ struct ContentView: View {
             }
             .frame(minHeight: 280)
 
-            HStack {
-                Button("Reset Selected") { vm.resetSelected() }
-                    .disabled(vm.selectedRows.isEmpty || vm.isRunning)
-                Button("Reset All") { vm.resetAll() }
-                    .disabled(vm.rows.isEmpty || vm.isRunning)
-            }
+            resetRow
 
             Text("Log").font(.headline)
             ScrollView {
@@ -782,16 +955,90 @@ struct ContentView: View {
             .frame(minHeight: 140)
         }
         .padding(14)
+        .onChange(of: vm.inputDir) { _ in
+            vm.saveLocationPreferences()
+        }
+        .onChange(of: vm.outputDir) { _ in
+            vm.saveLocationPreferences()
+        }
         .task {
             await vm.scanMetadata()
         }
     }
 
-    private func labeledField(_ label: String, text: Binding<String>) -> some View {
+    private var inputRow: some View {
+        HStack {
+            Text("Input Folder")
+            TextField("Input folder", text: $vm.inputDir)
+            Button("Browse") { vm.chooseInputDir() }
+            Button("Load List") { Task { await vm.scanMetadata() } }
+                .disabled(vm.isScanning || vm.isRunning)
+        }
+    }
+
+    private var outputRow: some View {
+        HStack {
+            Text("Output Folder")
+            TextField("Output folder", text: $vm.outputDir)
+            Button("Browse") { vm.chooseOutputDir() }
+        }
+    }
+
+    private var settingsRow: some View {
+        HStack(spacing: 12) {
+            Picker("Border Mode", selection: $vm.borderMode) {
+                ForEach(BorderMode.allCases) { mode in
+                    Text(mode.displayName).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 200)
+            labeledField("Border", text: $vm.border, unit: vm.borderMode.unitLabel)
+            labeledField("Bottom", text: $vm.bottom, unit: vm.borderMode.unitLabel)
+            Button("Reset \(vm.borderMode.displayName)") { vm.resetBorderForCurrentMode() }
+            labeledField("Padding", text: $vm.pad)
+            labeledField("Date Font", text: $vm.dateFont)
+            labeledField("Title Font", text: $vm.titleFont)
+        }
+    }
+
+    private var runRow: some View {
+        HStack {
+            Button("Run") { Task { await vm.runProcessing() } }
+                .disabled(vm.isRunning || vm.isScanning)
+            ProgressView(value: vm.progress)
+                .frame(width: 220)
+            Text(vm.status).font(.caption)
+            Spacer()
+            Text("Images: \(vm.rows.count)")
+            Text("Selected: \(vm.selectedRows.count)")
+            Text("Edited: \(vm.editedCount)")
+        }
+    }
+
+    private var resetRow: some View {
+        HStack {
+            Button(vm.selectAllButtonTitle) { vm.toggleSelectAll() }
+                .disabled(vm.rows.isEmpty || vm.isRunning)
+            Button("Reverse Selected Edited Files") { vm.reverseSelectedEditedFiles() }
+                .disabled(vm.selectedRows.isEmpty || vm.isRunning)
+            Button("Reset All") { vm.resetAll() }
+                .disabled(vm.rows.isEmpty || vm.isRunning)
+        }
+    }
+
+    private func labeledField(_ label: String, text: Binding<String>, unit: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label).font(.caption)
-            TextField(label, text: text)
-                .frame(width: 90)
+            HStack(spacing: 6) {
+                TextField(label, text: text)
+                    .frame(width: 70)
+                if let unit {
+                    Text(unit)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
     }
 }
@@ -802,6 +1049,17 @@ struct FrameMacApp: App {
         WindowGroup("Frame Mac App") {
             ContentView()
                 .frame(minWidth: 980, minHeight: 720)
+        }
+        .commands {
+            CommandGroup(replacing: .newItem) {}
+            CommandGroup(replacing: .saveItem) {}
+            CommandGroup(replacing: .undoRedo) {}
+            CommandGroup(replacing: .pasteboard) {}
+            CommandGroup(replacing: .textEditing) {}
+            CommandGroup(replacing: .toolbar) {}
+            CommandGroup(replacing: .sidebar) {}
+            CommandGroup(replacing: .windowList) {}
+            CommandGroup(replacing: .help) {}
         }
     }
 }
