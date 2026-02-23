@@ -11,6 +11,7 @@ __pycache__/
 # Runtime/output folders
 dist/
 framed/
+dist-appstore/
 
 # SwiftPM / Xcode build artifacts
 FrameMacApp/.build/
@@ -24,3 +25,4 @@ xcuserdata/
 
 # Credentials
 .netrc
+.appstore.env

@@ -17,9 +17,9 @@ targets:
     deploymentTarget: "13.0"
     sources:
       - ../FrameMacApp/Sources/FrameMacApp
-    resources:
       - ../fonts
       - FrameMacApp.xcassets
+      - AppIcon.icns
     entitlements:
       path: FrameMacApp.entitlements
       properties:
@@ -28,11 +28,14 @@ targets:
     settings:
       base:
         INFOPLIST_FILE: Info.plist
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: ""
         ENABLE_HARDENED_RUNTIME: false
         SWIFT_EMIT_LOC_STRINGS: true
+    postBuildScripts:
+      - name: Copy AppIcon.icns
+        script: |
+          cp "${PROJECT_DIR}/AppIcon.icns" "${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/AppIcon.icns"
 schemes:
   FrameMacApp:
     build:

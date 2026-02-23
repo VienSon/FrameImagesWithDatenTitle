@@ -1,80 +1,93 @@
-# App Store Handoff Guide
+# App Store Submission Guide (macOS)
 
-This repo is prepared so you can pull it on your Apple-developer machine and publish from Xcode.
+Use this guide from `/Users/MobieyesDev/Working/FrameImagesWithDatenTitle`.
 
-## 1) Generate Xcode project
+## 1) One-time setup
 
-Install XcodeGen once:
+1. Ensure you can build in Xcode (`Xcode 26.2` is installed on this machine).
+2. Ensure `xcodegen` is installed if you need to regenerate the project:
 
 ```bash
 brew install xcodegen
 ```
 
-Generate project:
+3. Generate project if needed:
 
 ```bash
-cd /Users/vienson/Pictures/Frame
 ./generate_xcode_project.sh
 ```
+
+## 2) Configure release values
+
+Create your local release env file:
+
+```bash
+cp .appstore.env.example .appstore.env
+```
+
+Set these in `.appstore.env`:
+
+- `APPLE_TEAM_ID` (10-character Apple Developer Team ID)
+- `APP_BUNDLE_ID` (final App Store bundle identifier)
+- `APP_VERSION` (marketing version, example `1.0.0`)
+- `APP_BUILD` (integer build number, example `1`)
+
+## 3) Configure signing once in Xcode
 
 Open:
 
-```bash
-open /Users/vienson/Pictures/Frame/AppStoreProject/FrameMacApp.xcodeproj
-```
+- `/Users/MobieyesDev/Working/FrameImagesWithDatenTitle/AppStoreProject/FrameMacApp.xcodeproj`
 
-## 2) Configure signing in Xcode
+In target `FrameMacApp` -> `Signing & Capabilities`:
 
-In target `FrameMacApp`:
-
-1. `Signing & Capabilities`
-2. Select your Team
-3. Confirm Bundle Identifier (default in repo is `local.vienson.frame-mac-app`; change to your App Store ID)
-4. Keep App Sandbox enabled:
+1. Select your Team.
+2. Keep `Automatically manage signing` enabled.
+3. Keep App Sandbox enabled with:
    - `com.apple.security.app-sandbox`
    - `com.apple.security.files.user-selected.read-write`
 
-## 3) Bump version/build before release
+## 4) Preflight checks
 
-Edit in `AppStoreProject/project.yml`:
-
-- `MARKETING_VERSION`
-- `CURRENT_PROJECT_VERSION`
-
-Regenerate project after edits:
+Run:
 
 ```bash
-./generate_xcode_project.sh
+./preflight_appstore.sh
 ```
 
-## 4) Archive + upload
+This verifies:
 
-Option A (recommended): Xcode Organizer
+- Required plist files are valid
+- Team ID, Bundle ID, Version, Build are set and valid
+- App icon set files are present
+- Xcode scheme exists
 
-1. Product -> Archive
-2. Validate App
-3. Distribute App -> App Store Connect
+## 5) Archive + export for App Store Connect
 
-Option B (CLI):
+Run:
 
 ```bash
 ./archive_appstore.sh
 ```
 
-This creates:
+Outputs:
 
-- `dist-appstore/FrameMacApp.xcarchive`
-- `dist-appstore/export/` (upload package)
+- Archive: `dist-appstore/FrameMacApp.xcarchive`
+- Exported upload package: `dist-appstore/export/`
 
-## 5) Files used for App Store build
+## 6) Upload in Xcode Organizer (recommended)
 
-- `AppStoreProject/project.yml` (XcodeGen spec)
-- `AppStoreProject/Info.plist`
-- `AppStoreProject/FrameMacApp.entitlements`
-- `AppStoreProject/FrameMacApp.xcassets/AppIcon.appiconset/*`
-- `AppStoreProject/ExportOptions-AppStore.plist`
+1. Open Xcode -> `Window` -> `Organizer`
+2. Select the archive
+3. `Distribute App` -> `App Store Connect` -> `Upload`
 
-## Notes
+## 7) App Store Connect checklist
 
-- The app is now native Swift only (no Python runtime dependency for Phase 2/3).
-- Input/output folder access is via user-selected paths, compatible with App Sandbox.
+Before submitting for review, make sure App Store Connect has:
+
+- App name, subtitle, description, keywords
+- Privacy policy URL
+- Support URL
+- Category
+- Age rating
+- Screenshots for required macOS display sizes
+- App privacy answers (data collection)
