@@ -33,6 +33,7 @@ struct RenderSettings: Sendable {
     let dateFont: Int
     let titleFont: Int
     let titleFontChoice: TitleFontChoice
+    let textLayout: TextLayoutMode
 }
 
 struct ProcessSummary: Sendable {
@@ -122,6 +123,23 @@ struct SavedSettingPreset: Codable {
     let dateFont: String
     let titleFont: String
     let titleFontChoice: TitleFontChoice
+    let textLayout: TextLayoutMode
+}
+
+enum TextLayoutMode: String, CaseIterable, Identifiable, Sendable, Codable {
+    case stacked
+    case row
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .stacked:
+            return "Stacked"
+        case .row:
+            return "Same Row"
+        }
+    }
 }
 
 enum NativeFrameProcessor {
@@ -321,12 +339,17 @@ enum NativeFrameProcessor {
         let dateTextTrimmed = dateText.trimmingCharacters(in: .whitespacesAndNewlines)
         let titleTrimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let dateFont = loadFont(fileName: "JetBrainsMono-Regular.ttf", size: CGFloat(max(1, settings.dateFont)), fallbackName: "Menlo")
         let titleFont = loadFont(
             fileName: settings.titleFontChoice.fileName,
             size: CGFloat(max(1, settings.titleFont)),
             fallbackName: settings.titleFontChoice.fallbackPostScriptName
         )
+        let dateFont: CTFont
+        if settings.textLayout == .row {
+            dateFont = titleFont
+        } else {
+            dateFont = loadFont(fileName: "JetBrainsMono-Regular.ttf", size: CGFloat(max(1, settings.dateFont)), fallbackName: "Menlo")
+        }
 
         let textMaxW = max(1, w - (pad * 2))
         let gap = max(4, Int(Double(max(1, settings.titleFont)) * 0.35))
@@ -334,18 +357,33 @@ enum NativeFrameProcessor {
 
         let dateH = Int(ceil(lineHeight(dateFont)))
         let titleH = Int(ceil(lineHeight(titleFont)))
-        let titleLines = titleTrimmed.isEmpty ? [] : wrapText(titleTrimmed, font: titleFont, maxWidth: CGFloat(textMaxW))
-        let titleBlockH = titleLines.count * titleH + max(0, titleLines.count - 1) * gap
-
+        let titleLinesStacked = titleTrimmed.isEmpty ? [] : wrapText(titleTrimmed, font: titleFont, maxWidth: CGFloat(textMaxW))
+        let titleBlockHStacked = titleLinesStacked.count * titleH + max(0, titleLinesStacked.count - 1) * gap
         var contentH = topOffset
-        if !dateTextTrimmed.isEmpty {
-            contentH += dateH
-            if !titleLines.isEmpty {
-                contentH += gap
+        var titleLinesToDraw = titleLinesStacked
+        var drawInRow = false
+
+        if settings.textLayout == .row, !dateTextTrimmed.isEmpty, !titleTrimmed.isEmpty {
+            let dateW = Int(ceil(textWidth(dateTextTrimmed, font: dateFont)))
+            let rowGap = max(12, Int(Double(max(1, settings.titleFont)) * 0.25))
+            let titleStartX = dateW + rowGap
+            let titleW = max(1, textMaxW - titleStartX)
+            let titleLinesRow = wrapText(titleTrimmed, font: titleFont, maxWidth: CGFloat(titleW))
+            let titleBlockHRow = titleLinesRow.count * titleH + max(0, titleLinesRow.count - 1) * gap
+            contentH += max(dateH, titleBlockHRow)
+            contentH += max(0, topOffset / 2)
+            titleLinesToDraw = titleLinesRow
+            drawInRow = true
+        } else {
+            if !dateTextTrimmed.isEmpty {
+                contentH += dateH
+                if !titleLinesStacked.isEmpty {
+                    contentH += gap
+                }
             }
+            contentH += titleBlockHStacked
+            contentH += max(0, topOffset / 2)
         }
-        contentH += titleBlockH
-        contentH += max(0, topOffset / 2)
 
         let actualBottom = max(bottom, contentH)
 
@@ -373,8 +411,9 @@ enum NativeFrameProcessor {
         let textColor = CGColor(gray: 0.16, alpha: 1)
         var yTop = border + h + topOffset
         let xLeft = CGFloat(border + pad)
+        let rowGap = max(12, Int(Double(max(1, settings.titleFont)) * 0.25))
 
-        if !dateTextTrimmed.isEmpty {
+        if drawInRow {
             drawTextLine(
                 dateTextTrimmed,
                 font: dateFont,
@@ -384,20 +423,46 @@ enum NativeFrameProcessor {
                 canvasHeight: newH,
                 in: ctx
             )
-            yTop += dateH + gap
-        }
+            let dateW = Int(ceil(textWidth(dateTextTrimmed, font: dateFont)))
+            let titleX = xLeft + CGFloat(dateW + rowGap)
+            for line in titleLinesToDraw {
+                drawTextLine(
+                    line,
+                    font: titleFont,
+                    color: textColor,
+                    x: titleX,
+                    yTop: yTop,
+                    canvasHeight: newH,
+                    in: ctx
+                )
+                yTop += titleH + gap
+            }
+        } else {
+            if !dateTextTrimmed.isEmpty {
+                drawTextLine(
+                    dateTextTrimmed,
+                    font: dateFont,
+                    color: textColor,
+                    x: xLeft,
+                    yTop: yTop,
+                    canvasHeight: newH,
+                    in: ctx
+                )
+                yTop += dateH + gap
+            }
 
-        for line in titleLines {
-            drawTextLine(
-                line,
-                font: titleFont,
-                color: textColor,
-                x: xLeft,
-                yTop: yTop,
-                canvasHeight: newH,
-                in: ctx
-            )
-            yTop += titleH + gap
+            for line in titleLinesToDraw {
+                drawTextLine(
+                    line,
+                    font: titleFont,
+                    color: textColor,
+                    x: xLeft,
+                    yTop: yTop,
+                    canvasHeight: newH,
+                    in: ctx
+                )
+                yTop += titleH + gap
+            }
         }
 
         guard let outCG = ctx.makeImage() else {
@@ -625,6 +690,7 @@ final class FrameViewModel: ObservableObject {
     private static let bottomPercentKey = "frame.bottomPercent"
     private static let titleFontChoiceKey = "frame.titleFontChoice"
     private static let namedSettingsKey = "frame.namedSettings"
+    private static let textLayoutKey = "frame.textLayout"
 
     @Published var inputDir: String
     @Published var outputDir: String
@@ -641,6 +707,9 @@ final class FrameViewModel: ObservableObject {
     @Published var dateFont: String = defaultDateFont
     @Published var titleFont: String = defaultTitleFont
     @Published var titleFontChoice: TitleFontChoice = .inter {
+        didSet { persistPathsAndSettings() }
+    }
+    @Published var textLayout: TextLayoutMode = .stacked {
         didSet { persistPathsAndSettings() }
     }
     @Published var presetName: String = ""
@@ -671,6 +740,10 @@ final class FrameViewModel: ObservableObject {
         if let titleFontChoiceRaw = defaults.string(forKey: Self.titleFontChoiceKey),
            let choice = TitleFontChoice(rawValue: titleFontChoiceRaw) {
             titleFontChoice = choice
+        }
+        if let textLayoutRaw = defaults.string(forKey: Self.textLayoutKey),
+           let saved = TextLayoutMode(rawValue: textLayoutRaw) {
+            textLayout = saved
         }
 
         let savedBorderPx = defaults.string(forKey: Self.borderPixelsKey) ?? Self.defaultBorderPixels
@@ -766,7 +839,8 @@ final class FrameViewModel: ObservableObject {
             pad: padVal,
             dateFont: dateFontVal,
             titleFont: titleFontVal,
-            titleFontChoice: titleFontChoice
+            titleFontChoice: titleFontChoice,
+            textLayout: textLayout
         )
 
         let selectedFilenames = Set(
@@ -987,6 +1061,7 @@ final class FrameViewModel: ObservableObject {
         defaults.set(outputDir, forKey: Self.outputDirKey)
         defaults.set(borderMode.rawValue, forKey: Self.borderModeKey)
         defaults.set(titleFontChoice.rawValue, forKey: Self.titleFontChoiceKey)
+        defaults.set(textLayout.rawValue, forKey: Self.textLayoutKey)
 
         if borderMode == .pixels {
             defaults.set(border, forKey: Self.borderPixelsKey)
@@ -1005,7 +1080,8 @@ final class FrameViewModel: ObservableObject {
             pad: pad,
             dateFont: dateFont,
             titleFont: titleFont,
-            titleFontChoice: titleFontChoice
+            titleFontChoice: titleFontChoice,
+            textLayout: textLayout
         )
     }
 
@@ -1017,6 +1093,7 @@ final class FrameViewModel: ObservableObject {
         dateFont = preset.dateFont
         titleFont = preset.titleFont
         titleFontChoice = preset.titleFontChoice
+        textLayout = preset.textLayout
     }
 
     private func loadNamedSettings() {
@@ -1170,6 +1247,13 @@ struct ContentView: View {
                     Button("Reset \(vm.borderMode.displayName)") { vm.resetBorderForCurrentMode() }
                         .buttonStyle(.bordered)
                     Spacer()
+                    Picker("Text Layout", selection: $vm.textLayout) {
+                        ForEach(TextLayoutMode.allCases) { mode in
+                            Text(mode.displayName).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 220)
                 }
 
                 HStack(spacing: 12) {
