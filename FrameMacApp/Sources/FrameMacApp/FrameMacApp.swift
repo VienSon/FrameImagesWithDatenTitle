@@ -451,25 +451,6 @@ enum NativeFrameProcessor {
             let topBorder = max(0, Int((Double(h) * topPercent / 100.0).rounded()))
             let bottomBorder = max(0, Int((Double(h) * bottomPercent / 100.0).rounded()))
 
-            let newW = w + sideBorder * 2
-            let newH = h + topBorder + bottomBorder
-
-            guard let ctx = CGContext(
-                data: nil,
-                width: newW,
-                height: newH,
-                bitsPerComponent: 8,
-                bytesPerRow: 0,
-                space: CGColorSpaceCreateDeviceRGB(),
-                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-            ) else {
-                throw NSError(domain: "FrameMacApp", code: 11, userInfo: [NSLocalizedDescriptionKey: "Could not create drawing context"])
-            }
-
-            ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
-            ctx.fill(CGRect(x: 0, y: 0, width: newW, height: newH))
-            ctx.draw(cg, in: CGRect(x: sideBorder, y: bottomBorder, width: w, height: h))
-
             let textColor = CGColor(gray: 0.14, alpha: 1)
             let innerPad = max(12, Int((Double(sideBorder) * 0.35).rounded()))
             let xLeft = CGFloat(sideBorder + innerPad)
@@ -529,8 +510,37 @@ enum NativeFrameProcessor {
                 contentH += authorH
             }
 
+            let hasMissingField = titleTrimmed.isEmpty || captionText.isEmpty || locationDateText.isEmpty || authorText.isEmpty
+            let verticalInset = max(10, Int((Double(bottomBorder) * 0.12).rounded()))
+            let fitBottomBorder = contentH > 0 ? contentH + verticalInset * 2 : verticalInset * 2
+            let actualBottomBorder: Int
+            if hasMissingField {
+                actualBottomBorder = max(0, fitBottomBorder)
+            } else {
+                actualBottomBorder = max(bottomBorder, fitBottomBorder)
+            }
+
+            let newW = w + sideBorder * 2
+            let newH = h + topBorder + actualBottomBorder
+
+            guard let ctx = CGContext(
+                data: nil,
+                width: newW,
+                height: newH,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else {
+                throw NSError(domain: "FrameMacApp", code: 11, userInfo: [NSLocalizedDescriptionKey: "Could not create drawing context"])
+            }
+
+            ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+            ctx.fill(CGRect(x: 0, y: 0, width: newW, height: newH))
+            ctx.draw(cg, in: CGRect(x: sideBorder, y: actualBottomBorder, width: w, height: h))
+
             let bottomTopY = topBorder + h
-            var yTop = bottomTopY + max(0, (bottomBorder - contentH) / 2)
+            var yTop = bottomTopY + max(0, (actualBottomBorder - contentH) / 2)
 
             if !titleLines.isEmpty {
                 for line in titleLines {
