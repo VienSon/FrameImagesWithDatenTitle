@@ -4,11 +4,14 @@ from __future__ import annotations
 import argparse
 import re
 import logging
+import shutil
+import subprocess
 from pathlib import Path
 from datetime import datetime
 from collections.abc import Callable
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL.PngImagePlugin import PngInfo
 import piexif
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -240,6 +243,36 @@ def save_with_quality_preserved(
     src_path: Path,
     out_dir: Path,
 ) -> Path:
+    def _copy_all_metadata_with_exiftool(src: Path, dst: Path) -> None:
+        exiftool = shutil.which("exiftool")
+        if not exiftool:
+            return
+        try:
+            subprocess.run(
+                [
+                    exiftool,
+                    "-overwrite_original",
+                    "-TagsFromFile",
+                    str(src),
+                    "-all:all",
+                    "-unsafe",
+                    str(dst),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except Exception as e:
+            LOGGER.warning("Failed to copy all metadata via exiftool for %s: %s", dst, e)
+
+    def _copy_common_metadata(save_kwargs: dict) -> dict:
+        # Preserve common metadata blocks that Pillow exposes across formats.
+        for key in ("icc_profile", "exif", "xmp", "dpi"):
+            value = src_image.info.get(key)
+            if value:
+                save_kwargs[key] = value
+        return save_kwargs
+
     def unique_out_path(name: str) -> Path:
         candidate = out_dir / name
         if not candidate.exists():
@@ -262,35 +295,55 @@ def save_with_quality_preserved(
             "subsampling": 0,
             "optimize": False,
         }
-        icc = src_image.info.get("icc_profile")
-        if icc:
-            save_kwargs["icc_profile"] = icc
-        exif = src_image.info.get("exif")
-        if exif:
-            save_kwargs["exif"] = exif
+        _copy_common_metadata(save_kwargs)
+        comment = src_image.info.get("comment")
+        if comment:
+            save_kwargs["comment"] = comment
         framed.save(out_path, **save_kwargs)
+        _copy_all_metadata_with_exiftool(src_path, out_path)
         return out_path
 
     if suffix in {".tif", ".tiff"}:
         out_path = unique_out_path(src_path.with_suffix(".tif").name)
         save_kwargs = {"format": "TIFF", "compression": "tiff_lzw"}
-        icc = src_image.info.get("icc_profile")
-        if icc:
-            save_kwargs["icc_profile"] = icc
+        _copy_common_metadata(save_kwargs)
         framed.save(out_path, **save_kwargs)
+        _copy_all_metadata_with_exiftool(src_path, out_path)
         return out_path
 
     if suffix == ".png":
         out_path = unique_out_path(src_path.with_suffix(".png").name)
         save_kwargs = {"format": "PNG", "compress_level": 1}
-        icc = src_image.info.get("icc_profile")
-        if icc:
-            save_kwargs["icc_profile"] = icc
+        _copy_common_metadata(save_kwargs)
+        pnginfo = PngInfo()
+        if hasattr(src_image, "text"):
+            for key, value in src_image.text.items():
+                if isinstance(value, str):
+                    pnginfo.add_text(key, value)
+        if src_image.info.get("xmp"):
+            xmp_raw = src_image.info["xmp"]
+            if isinstance(xmp_raw, bytes):
+                xmp_raw = xmp_raw.decode("utf-8", errors="ignore")
+            pnginfo.add_itxt("XML:com.adobe.xmp", xmp_raw)
+        if pnginfo.chunks:
+            save_kwargs["pnginfo"] = pnginfo
         framed.save(out_path, **save_kwargs)
+        _copy_all_metadata_with_exiftool(src_path, out_path)
         return out_path
 
     out_path = unique_out_path(src_path.with_suffix(".jpg").name)
-    framed.save(out_path, format="JPEG", quality=100, subsampling=0, optimize=False)
+    save_kwargs = {
+        "format": "JPEG",
+        "quality": 100,
+        "subsampling": 0,
+        "optimize": False,
+    }
+    _copy_common_metadata(save_kwargs)
+    comment = src_image.info.get("comment")
+    if comment:
+        save_kwargs["comment"] = comment
+    framed.save(out_path, **save_kwargs)
+    _copy_all_metadata_with_exiftool(src_path, out_path)
     return out_path
 
 

@@ -35,6 +35,12 @@ struct RenderSettings: Sendable {
     let titleFontChoice: TitleFontChoice
     let titleFontVariant: TitleFontVariant
     let textLayout: TextLayoutMode
+    let editorialSidePercent: Double
+    let editorialTopPercent: Double
+    let editorialBottomPercent: Double
+    let editorialCaption: String
+    let editorialLocation: String
+    let editorialAuthor: String
 }
 
 struct ProcessSummary: Sendable {
@@ -126,6 +132,83 @@ struct SavedSettingPreset: Codable {
     let titleFontChoice: TitleFontChoice
     let titleFontVariant: TitleFontVariant
     let textLayout: TextLayoutMode
+    let editorialSidePercent: String
+    let editorialTopPercent: String
+    let editorialBottomPercent: String
+    let editorialCaption: String
+    let editorialLocation: String
+    let editorialAuthor: String
+
+    init(
+        borderMode: BorderMode,
+        border: String,
+        bottom: String,
+        pad: String,
+        dateFont: String,
+        titleFont: String,
+        titleFontChoice: TitleFontChoice,
+        titleFontVariant: TitleFontVariant,
+        textLayout: TextLayoutMode,
+        editorialSidePercent: String,
+        editorialTopPercent: String,
+        editorialBottomPercent: String,
+        editorialCaption: String,
+        editorialLocation: String,
+        editorialAuthor: String
+    ) {
+        self.borderMode = borderMode
+        self.border = border
+        self.bottom = bottom
+        self.pad = pad
+        self.dateFont = dateFont
+        self.titleFont = titleFont
+        self.titleFontChoice = titleFontChoice
+        self.titleFontVariant = titleFontVariant
+        self.textLayout = textLayout
+        self.editorialSidePercent = editorialSidePercent
+        self.editorialTopPercent = editorialTopPercent
+        self.editorialBottomPercent = editorialBottomPercent
+        self.editorialCaption = editorialCaption
+        self.editorialLocation = editorialLocation
+        self.editorialAuthor = editorialAuthor
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case borderMode
+        case border
+        case bottom
+        case pad
+        case dateFont
+        case titleFont
+        case titleFontChoice
+        case titleFontVariant
+        case textLayout
+        case editorialSidePercent
+        case editorialTopPercent
+        case editorialBottomPercent
+        case editorialCaption
+        case editorialLocation
+        case editorialAuthor
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        borderMode = try c.decode(BorderMode.self, forKey: .borderMode)
+        border = try c.decode(String.self, forKey: .border)
+        bottom = try c.decode(String.self, forKey: .bottom)
+        pad = try c.decode(String.self, forKey: .pad)
+        dateFont = try c.decode(String.self, forKey: .dateFont)
+        titleFont = try c.decode(String.self, forKey: .titleFont)
+        titleFontChoice = try c.decode(TitleFontChoice.self, forKey: .titleFontChoice)
+        titleFontVariant = try c.decode(TitleFontVariant.self, forKey: .titleFontVariant)
+        textLayout = try c.decode(TextLayoutMode.self, forKey: .textLayout)
+        editorialSidePercent = try c.decodeIfPresent(String.self, forKey: .editorialSidePercent) ?? "3"
+        editorialTopPercent = try c.decodeIfPresent(String.self, forKey: .editorialTopPercent) ?? "1"
+        editorialBottomPercent = try c.decodeIfPresent(String.self, forKey: .editorialBottomPercent) ?? "14"
+        editorialCaption = try c.decodeIfPresent(String.self, forKey: .editorialCaption) ?? ""
+        editorialLocation = try c.decodeIfPresent(String.self, forKey: .editorialLocation) ?? ""
+        editorialAuthor = try c.decodeIfPresent(String.self, forKey: .editorialAuthor) ?? ""
+    }
 }
 
 enum TitleFontVariant: String, CaseIterable, Identifiable, Sendable, Codable {
@@ -161,6 +244,7 @@ enum TitleFontVariant: String, CaseIterable, Identifiable, Sendable, Codable {
 enum TextLayoutMode: String, CaseIterable, Identifiable, Sendable, Codable {
     case stacked
     case row
+    case editorial
 
     var id: String { rawValue }
 
@@ -170,6 +254,8 @@ enum TextLayoutMode: String, CaseIterable, Identifiable, Sendable, Codable {
             return "Stacked"
         case .row:
             return "Same Row"
+        case .editorial:
+            return "Editorial"
         }
     }
 }
@@ -353,6 +439,129 @@ enum NativeFrameProcessor {
 
         let w = cg.width
         let h = cg.height
+        let dateTextTrimmed = dateText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let titleTrimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if settings.textLayout == .editorial {
+            let sidePercent = min(max(settings.editorialSidePercent, 2.0), 4.0)
+            let topPercent = min(max(settings.editorialTopPercent, 0.0), 2.0)
+            let bottomPercent = min(max(settings.editorialBottomPercent, 12.0), 16.0)
+
+            let sideBorder = max(0, Int((Double(w) * sidePercent / 100.0).rounded()))
+            let topBorder = max(0, Int((Double(h) * topPercent / 100.0).rounded()))
+            let bottomBorder = max(0, Int((Double(h) * bottomPercent / 100.0).rounded()))
+
+            let newW = w + sideBorder * 2
+            let newH = h + topBorder + bottomBorder
+
+            guard let ctx = CGContext(
+                data: nil,
+                width: newW,
+                height: newH,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else {
+                throw NSError(domain: "FrameMacApp", code: 11, userInfo: [NSLocalizedDescriptionKey: "Could not create drawing context"])
+            }
+
+            ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+            ctx.fill(CGRect(x: 0, y: 0, width: newW, height: newH))
+            ctx.draw(cg, in: CGRect(x: sideBorder, y: bottomBorder, width: w, height: h))
+
+            let textColor = CGColor(gray: 0.14, alpha: 1)
+            let innerPad = max(12, Int((Double(sideBorder) * 0.35).rounded()))
+            let xLeft = CGFloat(sideBorder + innerPad)
+            let textMaxW = CGFloat(max(1, w - (innerPad * 2)))
+
+            let titleFontBase = loadFont(fileName: "SourceSerif4-Regular.ttf", size: CGFloat(max(12, Int((Double(bottomBorder) * 0.19).rounded()))), fallbackName: "TimesNewRomanPSMT")
+            let titleFont = applyFontWeight(titleFontBase, weight: 600)
+            let captionFont = loadFont(fileName: "SourceSerif4-Regular.ttf", size: CGFloat(max(11, Int((Double(bottomBorder) * 0.11).rounded()))), fallbackName: "TimesNewRomanPSMT")
+            let metaFont = applyFontWeight(loadFont(fileName: "Inter-Variable.ttf", size: CGFloat(max(10, Int((Double(bottomBorder) * 0.095).rounded()))), fallbackName: "HelveticaNeue"), weight: 400)
+            let authorFont = applyFontWeight(loadFont(fileName: "Inter-Variable.ttf", size: CGFloat(max(10, Int((Double(bottomBorder) * 0.085).rounded()))), fallbackName: "HelveticaNeue"), weight: 300)
+
+            let captionText = settings.editorialCaption.trimmingCharacters(in: .whitespacesAndNewlines)
+            let locationText = settings.editorialLocation.trimmingCharacters(in: .whitespacesAndNewlines)
+            let authorTextRaw = settings.editorialAuthor.trimmingCharacters(in: .whitespacesAndNewlines)
+            let authorText: String
+            if authorTextRaw.isEmpty {
+                authorText = ""
+            } else if authorTextRaw.hasPrefix("©") {
+                authorText = authorTextRaw
+            } else {
+                authorText = "© \(authorTextRaw)"
+            }
+
+            let locationDateText: String = {
+                if !locationText.isEmpty && !dateTextTrimmed.isEmpty {
+                    return "\(locationText) — \(dateTextTrimmed)"
+                }
+                if !locationText.isEmpty {
+                    return locationText
+                }
+                return dateTextTrimmed
+            }()
+
+            let titleLines = titleTrimmed.isEmpty ? [] : wrapText(titleTrimmed, font: titleFont, maxWidth: textMaxW)
+            let captionLines = captionText.isEmpty ? [] : wrapText(captionText, font: captionFont, maxWidth: textMaxW)
+            let titleH = Int(ceil(lineHeight(titleFont)))
+            let captionH = Int(ceil(lineHeight(captionFont)))
+            let metaH = Int(ceil(lineHeight(metaFont)))
+            let authorH = Int(ceil(lineHeight(authorFont)))
+            let gapTight = max(4, Int((Double(bottomBorder) * 0.045).rounded()))
+            let gapBlock = max(6, Int((Double(bottomBorder) * 0.07).rounded()))
+
+            var contentH = 0
+            if !titleLines.isEmpty {
+                contentH += titleLines.count * titleH + max(0, titleLines.count - 1) * gapTight
+            }
+            if !captionLines.isEmpty {
+                if contentH > 0 { contentH += gapBlock }
+                contentH += captionLines.count * captionH + max(0, captionLines.count - 1) * gapTight
+            }
+            if !locationDateText.isEmpty {
+                if contentH > 0 { contentH += gapBlock }
+                contentH += metaH
+            }
+            if !authorText.isEmpty {
+                if contentH > 0 { contentH += gapTight }
+                contentH += authorH
+            }
+
+            let bottomTopY = topBorder + h
+            var yTop = bottomTopY + max(0, (bottomBorder - contentH) / 2)
+
+            if !titleLines.isEmpty {
+                for line in titleLines {
+                    drawTextLine(line, font: titleFont, color: textColor, x: xLeft, yTop: yTop, canvasHeight: newH, in: ctx)
+                    yTop += titleH + gapTight
+                }
+                yTop -= gapTight
+            }
+            if !captionLines.isEmpty {
+                if yTop > bottomTopY { yTop += gapBlock }
+                for line in captionLines {
+                    drawTextLine(line, font: captionFont, color: textColor, x: xLeft, yTop: yTop, canvasHeight: newH, in: ctx)
+                    yTop += captionH + gapTight
+                }
+                yTop -= gapTight
+            }
+            if !locationDateText.isEmpty {
+                if yTop > bottomTopY { yTop += gapBlock }
+                drawTextLine(locationDateText, font: metaFont, color: textColor, x: xLeft, yTop: yTop, canvasHeight: newH, in: ctx)
+                yTop += metaH
+            }
+            if !authorText.isEmpty {
+                if yTop > bottomTopY { yTop += gapTight }
+                drawTextLine(authorText, font: authorFont, color: textColor, x: xLeft, yTop: yTop, canvasHeight: newH, in: ctx)
+            }
+
+            guard let outCG = ctx.makeImage() else {
+                throw NSError(domain: "FrameMacApp", code: 12, userInfo: [NSLocalizedDescriptionKey: "Could not finalize image"])
+            }
+            return try writeOutputImage(outCG: outCG, srcURL: srcURL, outDir: outDir)
+        }
 
         let borderInput = max(0.0, settings.border)
         let bottomInput = max(0.0, settings.bottom)
@@ -367,9 +576,6 @@ enum NativeFrameProcessor {
             bottom = max(0, Int((Double(w) * Double(bottomInput) / 100.0).rounded()))
         }
         let pad = max(0, settings.pad)
-
-        let dateTextTrimmed = dateText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let titleTrimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
 
         var titleFont = loadFont(
             fileName: settings.titleFontChoice.fileName,
@@ -502,19 +708,42 @@ enum NativeFrameProcessor {
             throw NSError(domain: "FrameMacApp", code: 12, userInfo: [NSLocalizedDescriptionKey: "Could not finalize image"])
         }
 
+        return try writeOutputImage(outCG: outCG, srcURL: srcURL, outDir: outDir)
+    }
+
+    private static func writeOutputImage(outCG: CGImage, srcURL: URL, outDir: URL) throws -> URL {
         let suffix = "." + srcURL.pathExtension.lowercased()
         let (finalURL, uti, props) = outputSpec(srcURL: srcURL, outDir: outDir, suffix: suffix)
+        let allProps = mergedImageProperties(srcURL: srcURL, outputProps: props)
 
         guard let dest = CGImageDestinationCreateWithURL(finalURL as CFURL, uti as CFString, 1, nil) else {
             throw NSError(domain: "FrameMacApp", code: 13, userInfo: [NSLocalizedDescriptionKey: "Could not create output destination"])
         }
 
-        CGImageDestinationAddImage(dest, outCG, props as CFDictionary)
+        CGImageDestinationAddImage(dest, outCG, allProps as CFDictionary)
         guard CGImageDestinationFinalize(dest) else {
             throw NSError(domain: "FrameMacApp", code: 14, userInfo: [NSLocalizedDescriptionKey: "Could not write output file"])
         }
-
         return finalURL
+    }
+
+    private static func mergedImageProperties(srcURL: URL, outputProps: [CFString: Any]) -> [CFString: Any] {
+        var merged: [CFString: Any] = outputProps
+        guard let src = CGImageSourceCreateWithURL(srcURL as CFURL, nil),
+              let srcProps = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any] else {
+            return merged
+        }
+
+        for (key, value) in srcProps {
+            // Dimensions are derived from rendered pixels and should not be copied from source.
+            if key == kCGImagePropertyPixelWidth || key == kCGImagePropertyPixelHeight {
+                continue
+            }
+            if merged[key] == nil {
+                merged[key] = value
+            }
+        }
+        return merged
     }
 
     private static func outputSpec(srcURL: URL, outDir: URL, suffix: String) -> (URL, String, [CFString: Any]) {
@@ -581,6 +810,10 @@ enum NativeFrameProcessor {
     }
 
     private static func applyTitleVariant(_ font: CTFont, variant: TitleFontVariant) -> CTFont {
+        applyFontWeight(font, weight: variant.weightValue)
+    }
+
+    private static func applyFontWeight(_ font: CTFont, weight: Double) -> CTFont {
         guard let axes = CTFontCopyVariationAxes(font) as? [[CFString: Any]] else {
             return font
         }
@@ -597,7 +830,7 @@ enum NativeFrameProcessor {
 
         let minValue = (weightAxis[kCTFontVariationAxisMinimumValueKey] as? NSNumber)?.doubleValue ?? 1
         let maxValue = (weightAxis[kCTFontVariationAxisMaximumValueKey] as? NSNumber)?.doubleValue ?? 1000
-        let clamped = min(max(variant.weightValue, minValue), maxValue)
+        let clamped = min(max(weight, minValue), maxValue)
         let descriptor = CTFontCopyFontDescriptor(font)
         let variedDescriptor = CTFontDescriptorCreateCopyWithVariation(descriptor, axisId, CGFloat(clamped))
         return CTFontCreateWithFontDescriptor(variedDescriptor, CTFontGetSize(font), nil)
@@ -737,6 +970,12 @@ final class FrameViewModel: ObservableObject {
     private static let defaultPadding = "40"
     private static let defaultDateFont = "60"
     private static let defaultTitleFont = "80"
+    private static let defaultEditorialSidePercent = "3"
+    private static let defaultEditorialTopPercent = "1"
+    private static let defaultEditorialBottomPercent = "14"
+    private static let defaultEditorialCaption = ""
+    private static let defaultEditorialLocation = ""
+    private static let defaultEditorialAuthor = ""
     private static let inputDirKey = "frame.lastInputDir"
     private static let outputDirKey = "frame.lastOutputDir"
     private static let borderModeKey = "frame.borderMode"
@@ -748,6 +987,12 @@ final class FrameViewModel: ObservableObject {
     private static let titleFontVariantKey = "frame.titleFontVariant"
     private static let namedSettingsKey = "frame.namedSettings"
     private static let textLayoutKey = "frame.textLayout"
+    private static let editorialSidePercentKey = "frame.editorialSidePercent"
+    private static let editorialTopPercentKey = "frame.editorialTopPercent"
+    private static let editorialBottomPercentKey = "frame.editorialBottomPercent"
+    private static let editorialCaptionKey = "frame.editorialCaption"
+    private static let editorialLocationKey = "frame.editorialLocation"
+    private static let editorialAuthorKey = "frame.editorialAuthor"
 
     @Published var inputDir: String
     @Published var outputDir: String
@@ -772,6 +1017,12 @@ final class FrameViewModel: ObservableObject {
     @Published var textLayout: TextLayoutMode = .stacked {
         didSet { persistPathsAndSettings() }
     }
+    @Published var editorialSidePercent: String = defaultEditorialSidePercent
+    @Published var editorialTopPercent: String = defaultEditorialTopPercent
+    @Published var editorialBottomPercent: String = defaultEditorialBottomPercent
+    @Published var editorialCaption: String = defaultEditorialCaption
+    @Published var editorialLocation: String = defaultEditorialLocation
+    @Published var editorialAuthor: String = defaultEditorialAuthor
     @Published var presetName: String = ""
     @Published var selectedPresetName: String = ""
     @Published private(set) var presetNames: [String] = []
@@ -809,6 +1060,12 @@ final class FrameViewModel: ObservableObject {
            let saved = TextLayoutMode(rawValue: textLayoutRaw) {
             textLayout = saved
         }
+        editorialSidePercent = defaults.string(forKey: Self.editorialSidePercentKey) ?? Self.defaultEditorialSidePercent
+        editorialTopPercent = defaults.string(forKey: Self.editorialTopPercentKey) ?? Self.defaultEditorialTopPercent
+        editorialBottomPercent = defaults.string(forKey: Self.editorialBottomPercentKey) ?? Self.defaultEditorialBottomPercent
+        editorialCaption = defaults.string(forKey: Self.editorialCaptionKey) ?? Self.defaultEditorialCaption
+        editorialLocation = defaults.string(forKey: Self.editorialLocationKey) ?? Self.defaultEditorialLocation
+        editorialAuthor = defaults.string(forKey: Self.editorialAuthorKey) ?? Self.defaultEditorialAuthor
 
         let savedBorderPx = defaults.string(forKey: Self.borderPixelsKey) ?? Self.defaultBorderPixels
         let savedBottomPx = defaults.string(forKey: Self.bottomPixelsKey) ?? Self.defaultBottomPixels
@@ -883,7 +1140,11 @@ final class FrameViewModel: ObservableObject {
               let padVal = Int(pad),
               let dateFontVal = Int(dateFont),
               let titleFontVal = Int(titleFont),
-              borderVal >= 0, bottomVal >= 0, padVal >= 0, dateFontVal >= 0, titleFontVal >= 0 else {
+              let editorialSidePercentVal = Double(editorialSidePercent),
+              let editorialTopPercentVal = Double(editorialTopPercent),
+              let editorialBottomPercentVal = Double(editorialBottomPercent),
+              borderVal >= 0, bottomVal >= 0, padVal >= 0, dateFontVal >= 0, titleFontVal >= 0,
+              editorialSidePercentVal >= 0, editorialTopPercentVal >= 0, editorialBottomPercentVal >= 0 else {
             status = "Invalid numeric settings"
             return
         }
@@ -905,7 +1166,13 @@ final class FrameViewModel: ObservableObject {
             titleFont: titleFontVal,
             titleFontChoice: titleFontChoice,
             titleFontVariant: titleFontVariant,
-            textLayout: textLayout
+            textLayout: textLayout,
+            editorialSidePercent: editorialSidePercentVal,
+            editorialTopPercent: editorialTopPercentVal,
+            editorialBottomPercent: editorialBottomPercentVal,
+            editorialCaption: editorialCaption,
+            editorialLocation: editorialLocation,
+            editorialAuthor: editorialAuthor
         )
 
         let selectedFilenames = Set(
@@ -1128,6 +1395,12 @@ final class FrameViewModel: ObservableObject {
         defaults.set(titleFontChoice.rawValue, forKey: Self.titleFontChoiceKey)
         defaults.set(titleFontVariant.rawValue, forKey: Self.titleFontVariantKey)
         defaults.set(textLayout.rawValue, forKey: Self.textLayoutKey)
+        defaults.set(editorialSidePercent, forKey: Self.editorialSidePercentKey)
+        defaults.set(editorialTopPercent, forKey: Self.editorialTopPercentKey)
+        defaults.set(editorialBottomPercent, forKey: Self.editorialBottomPercentKey)
+        defaults.set(editorialCaption, forKey: Self.editorialCaptionKey)
+        defaults.set(editorialLocation, forKey: Self.editorialLocationKey)
+        defaults.set(editorialAuthor, forKey: Self.editorialAuthorKey)
 
         if borderMode == .pixels {
             defaults.set(border, forKey: Self.borderPixelsKey)
@@ -1148,7 +1421,13 @@ final class FrameViewModel: ObservableObject {
             titleFont: titleFont,
             titleFontChoice: titleFontChoice,
             titleFontVariant: titleFontVariant,
-            textLayout: textLayout
+            textLayout: textLayout,
+            editorialSidePercent: editorialSidePercent,
+            editorialTopPercent: editorialTopPercent,
+            editorialBottomPercent: editorialBottomPercent,
+            editorialCaption: editorialCaption,
+            editorialLocation: editorialLocation,
+            editorialAuthor: editorialAuthor
         )
     }
 
@@ -1162,6 +1441,12 @@ final class FrameViewModel: ObservableObject {
         titleFontChoice = preset.titleFontChoice
         titleFontVariant = preset.titleFontVariant
         textLayout = preset.textLayout
+        editorialSidePercent = preset.editorialSidePercent
+        editorialTopPercent = preset.editorialTopPercent
+        editorialBottomPercent = preset.editorialBottomPercent
+        editorialCaption = preset.editorialCaption
+        editorialLocation = preset.editorialLocation
+        editorialAuthor = preset.editorialAuthor
     }
 
     private func loadNamedSettings() {
@@ -1321,7 +1606,7 @@ struct ContentView: View {
                         }
                         .pickerStyle(.segmented)
                         .labelsHidden()
-                        .frame(width: 240)
+                        .frame(width: 320)
                     }
 
                     settingGroupLabel("Border Reset") {
@@ -1333,39 +1618,59 @@ struct ContentView: View {
                 }
 
                 HStack(alignment: .top, spacing: 12) {
-                    settingGroupLabel("Dimensions & Size") {
-                        HStack(alignment: .top, spacing: 12) {
-                            labeledField("Border", text: $vm.border, unit: vm.borderMode.unitLabel)
-                            labeledField("Bottom", text: $vm.bottom, unit: vm.borderMode.unitLabel)
-                            labeledField("Padding", text: $vm.pad)
-                            labeledField("Date Font", text: $vm.dateFont)
-                            labeledField("Title Font", text: $vm.titleFont)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                    settingGroupLabel("Title Typeface") {
-                        Picker("", selection: $vm.titleFontChoice) {
-                            ForEach(TitleFontChoice.allCases) { choice in
-                                Text(choice.displayName).tag(choice)
+                    if vm.textLayout == .editorial {
+                        settingGroupLabel("Editorial Border (%)") {
+                            HStack(alignment: .top, spacing: 12) {
+                                labeledField("Left/Right", text: $vm.editorialSidePercent, unit: "%")
+                                labeledField("Top", text: $vm.editorialTopPercent, unit: "%")
+                                labeledField("Bottom", text: $vm.editorialBottomPercent, unit: "%")
                             }
                         }
-                        .labelsHidden()
-                        .frame(width: 240)
-                    }
-                    .frame(width: 240, alignment: .leading)
+                        .frame(width: 360, alignment: .leading)
 
-                    settingGroupLabel("Title Variant") {
-                        Picker("", selection: $vm.titleFontVariant) {
-                            ForEach(TitleFontVariant.allCases) { variant in
-                                Text(variant.displayName).tag(variant)
+                        settingGroupLabel("Editorial Text") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                labeledWideField("Caption", text: $vm.editorialCaption, placeholder: "Caption sentence explaining the moment")
+                                labeledWideField("Location", text: $vm.editorialLocation, placeholder: "Location")
+                                labeledWideField("Author", text: $vm.editorialAuthor, placeholder: "Author")
                             }
                         }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .frame(width: 240)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        settingGroupLabel("Dimensions & Size") {
+                            HStack(alignment: .top, spacing: 12) {
+                                labeledField("Border", text: $vm.border, unit: vm.borderMode.unitLabel)
+                                labeledField("Bottom", text: $vm.bottom, unit: vm.borderMode.unitLabel)
+                                labeledField("Padding", text: $vm.pad)
+                                labeledField("Date Font", text: $vm.dateFont)
+                                labeledField("Title Font", text: $vm.titleFont)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        settingGroupLabel("Title Typeface") {
+                            Picker("", selection: $vm.titleFontChoice) {
+                                ForEach(TitleFontChoice.allCases) { choice in
+                                    Text(choice.displayName).tag(choice)
+                                }
+                            }
+                            .labelsHidden()
+                            .frame(width: 240)
+                        }
+                        .frame(width: 240, alignment: .leading)
+
+                        settingGroupLabel("Title Variant") {
+                            Picker("", selection: $vm.titleFontVariant) {
+                                ForEach(TitleFontVariant.allCases) { variant in
+                                    Text(variant.displayName).tag(variant)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .frame(width: 240)
+                        }
+                        .frame(width: 240, alignment: .leading)
                     }
-                    .frame(width: 240, alignment: .leading)
                 }
             }
         }
@@ -1503,6 +1808,17 @@ struct ContentView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+        }
+    }
+
+    private func labeledWideField(_ label: String, text: Binding<String>, placeholder: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextField(placeholder, text: text)
+                .textFieldStyle(.roundedBorder)
+                .frame(minWidth: 360, maxWidth: 520)
         }
     }
 
