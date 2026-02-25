@@ -1043,6 +1043,7 @@ final class FrameViewModel: ObservableObject {
 
     @Published var rows: [MetadataRow] = []
     @Published var selectedRows: Set<String> = []
+    @Published var bulkTitle: String = ""
     @Published var previewImage: NSImage?
     @Published var previewFilename: String = ""
     @Published var status: String = "Ready"
@@ -1299,6 +1300,21 @@ final class FrameViewModel: ObservableObject {
             )
         }
         selectedRows = []
+    }
+
+    func syncTitleToSelectedRows() {
+        guard !selectedRows.isEmpty else {
+            status = "No files selected"
+            return
+        }
+        let syncedTitle = bulkTitle
+        rows = rows.map { row in
+            guard selectedRows.contains(row.id) else { return row }
+            var updated = row
+            updated.title = syncedTitle
+            return updated
+        }
+        status = "Synced title for \(selectedRows.count) file(s)"
     }
 
     func toggleSelectAll() {
@@ -1786,6 +1802,17 @@ struct ContentView: View {
                         .disabled(vm.rows.isEmpty || vm.isRunning)
                 }
 
+                HStack(spacing: 8) {
+                    Text("Sync Title")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField("Title for selected files", text: $vm.bulkTitle)
+                        .textFieldStyle(.roundedBorder)
+                    Button("Apply to Selected") { vm.syncTitleToSelectedRows() }
+                        .buttonStyle(.bordered)
+                        .disabled(vm.selectedRows.isEmpty || vm.isRunning)
+                }
+
                 Table(vm.rows, selection: $previewRowSelection) {
                     TableColumn("") { row in
                         Toggle(
@@ -1992,8 +2019,6 @@ struct FrameMacApp: App {
             CommandGroup(replacing: .newItem) {}
             CommandGroup(replacing: .saveItem) {}
             CommandGroup(replacing: .undoRedo) {}
-            CommandGroup(replacing: .pasteboard) {}
-            CommandGroup(replacing: .textEditing) {}
             CommandGroup(replacing: .toolbar) {}
             CommandGroup(replacing: .sidebar) {}
             CommandGroup(replacing: .windowList) {}

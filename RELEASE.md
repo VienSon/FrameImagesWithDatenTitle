@@ -1,3 +1,27 @@
+# Frame Mac App - What's New (from V1)
+
+## V1.0.0
+
+- Initial macOS release of Frame Studio.
+- Batch process images from a folder with customizable frame settings.
+- Editable metadata table for `Capture Date` and `Title`.
+- Typography and layout controls (pixels/percent border modes, title/date fonts).
+- Saved settings presets (save, load, delete).
+- Native output rendering with image metadata preservation.
+
+## V1.1.0
+
+- Added option to auto-create and use `Framed` subfolder inside Input folder for output.
+- File selection behavior improved:
+  - Only checkbox toggles include/exclude selection.
+  - Row selection is now used for preview.
+- Added image preview panel in Files section when a row is selected.
+- Added multi-row title sync:
+  - Enter one title and apply to all checkbox-selected rows.
+- Restored standard macOS text editing shortcuts in fields (including `Cmd+C` copy).
+
+---
+
 # Phase 3 Release Guide (Sign + Notarize)
 
 ## 1) Build and Sign the `.app`
