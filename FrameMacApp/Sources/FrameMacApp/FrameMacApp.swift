@@ -1043,6 +1043,8 @@ final class FrameViewModel: ObservableObject {
 
     @Published var rows: [MetadataRow] = []
     @Published var selectedRows: Set<String> = []
+    @Published var previewImage: NSImage?
+    @Published var previewFilename: String = ""
     @Published var status: String = "Ready"
     @Published var progress: Double = 0.0
     @Published var logs: String = ""
@@ -1119,6 +1121,8 @@ final class FrameViewModel: ObservableObject {
         status = "Scanning metadata..."
         rows = []
         selectedRows = []
+        previewImage = nil
+        previewFilename = ""
 
         do {
             let inputPath = inputDir
@@ -1315,6 +1319,12 @@ final class FrameViewModel: ObservableObject {
         } else {
             selectedRows.remove(row.id)
         }
+    }
+
+    func previewRow(_ row: MetadataRow) {
+        let url = URL(fileURLWithPath: inputDir).appendingPathComponent(row.filename)
+        previewImage = NSImage(contentsOf: url)
+        previewFilename = row.filename
     }
 
     func resetBorderForCurrentMode() {
@@ -1524,6 +1534,7 @@ final class FrameViewModel: ObservableObject {
 
 struct ContentView: View {
     @StateObject private var vm = FrameViewModel()
+    @State private var previewRowSelection: Set<String> = []
 
     var body: some View {
         ZStack {
@@ -1775,7 +1786,7 @@ struct ContentView: View {
                         .disabled(vm.rows.isEmpty || vm.isRunning)
                 }
 
-                Table(vm.rows, selection: $vm.selectedRows) {
+                Table(vm.rows, selection: $previewRowSelection) {
                     TableColumn("") { row in
                         Toggle(
                             "",
@@ -1813,7 +1824,46 @@ struct ContentView: View {
                     .width(70)
                 }
                 .frame(minHeight: 300)
+                .onChange(of: previewRowSelection) { selectedIDs in
+                    guard let selectedID = selectedIDs.first,
+                          let row = vm.rows.first(where: { $0.id == selectedID }) else {
+                        return
+                    }
+                    vm.previewRow(row)
+                }
+
+                previewSection
             }
+        }
+    }
+
+    private var previewSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Preview")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Group {
+                if let image = vm.previewImage {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(vm.previewFilename)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Image(nsImage: image)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: .infinity, minHeight: 180, maxHeight: 280)
+                    }
+                } else {
+                    Text("Click a file row to preview image")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 180, maxHeight: 280, alignment: .center)
+                }
+            }
+            .padding(8)
+            .background(Color(NSColor.textBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
     }
 
