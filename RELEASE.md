@@ -82,3 +82,56 @@ This notarizes and staples both:
 ```
 
 `spctl` should report accepted/notarized status after stapling.
+
+---
+
+# App Store Submission Guide (macOS)
+
+Use this path for Mac App Store upload. Do not notarize a DMG for App Store delivery.
+
+## 1) Prepare Apple-side assets
+
+- App Store Connect: create app record with your final Bundle ID.
+- Certificates:
+  - `Apple Distribution: ... (TEAMID)` for app signing.
+  - `3rd Party Mac Developer Installer: ... (TEAMID)` for installer package signing.
+- Provisioning Profile:
+  - macOS App Store profile matching the same Bundle ID.
+
+## 2) Build App Store `.pkg`
+
+```bash
+./build_app_store_pkg.sh \
+  --app-sign-identity "Apple Distribution: YOUR NAME (TEAMID)" \
+  --installer-sign-identity "3rd Party Mac Developer Installer: YOUR NAME (TEAMID)" \
+  --provisioning-profile "/absolute/path/FrameMacApp_AppStore.provisionprofile" \
+  --bundle-id "com.yourcompany.frame-mac-app" \
+  --version "1.1.0" \
+  --build "2"
+```
+
+Output:
+
+- `dist/Frame-Mac-App-AppStore.pkg`
+
+## 3) Upload to App Store Connect
+
+- Upload `dist/Frame-Mac-App-AppStore.pkg` using Transporter app or Xcode Organizer.
+- Complete metadata, screenshots, privacy, and submit for review.
+
+## 4) Compliance checklist for common rejections
+
+### 2.4.5 Performance: Hardware Compatibility (macOS)
+
+- [x] App Store package is signed for App Store distribution (not Developer ID flow).
+- [x] Sandbox entitlement enabled: `com.apple.security.app-sandbox`.
+- [x] File access limited to user-selected locations:
+  - `com.apple.security.files.user-selected.read-write`.
+- [x] App is self-contained in `.app` bundle with no external installer behavior.
+- [ ] Manually verify app works on Intel + Apple Silicon Macs before submit.
+
+### 5.2.5 Legal: Intellectual Property - Apple Products (macOS)
+
+- [x] App name/icon and UI are your own branding ("Frame Studio"/"Frame Mac App").
+- [x] No Apple-owned app names/logos or false endorsement language in app UI.
+- [ ] Review App Store metadata (subtitle, keywords, screenshots, description) for Apple trademark conflicts before submit.
