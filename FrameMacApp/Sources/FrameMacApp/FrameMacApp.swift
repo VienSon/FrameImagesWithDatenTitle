@@ -988,6 +988,7 @@ final class FrameViewModel: ObservableObject {
     private static let defaultEditorialAuthor = ""
     private static let inputDirKey = "frame.lastInputDir"
     private static let outputDirKey = "frame.lastOutputDir"
+    private static let autoUseFramedSubfolderKey = "frame.autoUseFramedSubfolder"
     private static let borderModeKey = "frame.borderMode"
     private static let borderPixelsKey = "frame.borderPixels"
     private static let bottomPixelsKey = "frame.bottomPixels"
@@ -1006,6 +1007,9 @@ final class FrameViewModel: ObservableObject {
 
     @Published var inputDir: String
     @Published var outputDir: String
+    @Published var autoUseFramedSubfolder: Bool {
+        didSet { persistPathsAndSettings() }
+    }
 
     @Published var borderMode: BorderMode = .pixels {
         didSet {
@@ -1054,6 +1058,7 @@ final class FrameViewModel: ObservableObject {
             .path
         inputDir = defaults.string(forKey: Self.inputDirKey) ?? picturesPath
         outputDir = defaults.string(forKey: Self.outputDirKey) ?? picturesPath
+        autoUseFramedSubfolder = defaults.bool(forKey: Self.autoUseFramedSubfolderKey)
         if let modeRaw = defaults.string(forKey: Self.borderModeKey),
            let mode = BorderMode(rawValue: modeRaw) {
             borderMode = mode
@@ -1164,8 +1169,9 @@ final class FrameViewModel: ObservableObject {
         isRunning = true
         progress = 0
         status = "Running..."
+        let outputPath = effectiveOutputDirPath()
         appendLog("Input: \(inputDir)")
-        appendLog("Output: \(outputDir)")
+        appendLog("Output: \(outputPath)")
 
         let settings = RenderSettings(
             borderMode: borderMode,
@@ -1200,7 +1206,7 @@ final class FrameViewModel: ObservableObject {
 
         do {
             let input = URL(fileURLWithPath: inputDir)
-            let output = URL(fileURLWithPath: outputDir)
+            let output = URL(fileURLWithPath: outputPath)
             enum ProcessEvent: Sendable {
                 case progress(Int, Int)
                 case log(String)
@@ -1327,6 +1333,10 @@ final class FrameViewModel: ObservableObject {
         persistPathsAndSettings()
     }
 
+    var effectiveOutputPathDescription: String {
+        effectiveOutputDirPath()
+    }
+
     func saveCurrentSettingsAsPreset() {
         let name = presetName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else {
@@ -1401,6 +1411,7 @@ final class FrameViewModel: ObservableObject {
         let defaults = UserDefaults.standard
         defaults.set(inputDir, forKey: Self.inputDirKey)
         defaults.set(outputDir, forKey: Self.outputDirKey)
+        defaults.set(autoUseFramedSubfolder, forKey: Self.autoUseFramedSubfolderKey)
         defaults.set(borderMode.rawValue, forKey: Self.borderModeKey)
         defaults.set(titleFontChoice.rawValue, forKey: Self.titleFontChoiceKey)
         defaults.set(titleFontVariant.rawValue, forKey: Self.titleFontVariantKey)
@@ -1500,6 +1511,15 @@ final class FrameViewModel: ObservableObject {
         panel.directoryURL = URL(fileURLWithPath: path)
         return panel.runModal() == .OK ? panel.url?.path : nil
     }
+
+    private func effectiveOutputDirPath() -> String {
+        guard autoUseFramedSubfolder else {
+            return outputDir
+        }
+        return URL(fileURLWithPath: inputDir)
+            .appendingPathComponent("Framed", isDirectory: true)
+            .path
+    }
 }
 
 struct ContentView: View {
@@ -1576,6 +1596,7 @@ struct ContentView: View {
                 folderRow(
                     label: "Input",
                     text: $vm.inputDir,
+                    isDisabled: false,
                     browseAction: vm.chooseInputDir,
                     trailingButtonTitle: "Load Files",
                     trailingAction: { Task { await vm.scanMetadata() } },
@@ -1584,11 +1605,18 @@ struct ContentView: View {
                 folderRow(
                     label: "Output",
                     text: $vm.outputDir,
+                    isDisabled: vm.autoUseFramedSubfolder,
                     browseAction: vm.chooseOutputDir,
                     trailingButtonTitle: nil,
                     trailingAction: nil,
                     trailingDisabled: false
                 )
+                Toggle("Auto-create and use \"Framed\" folder in Input", isOn: $vm.autoUseFramedSubfolder)
+                if vm.autoUseFramedSubfolder {
+                    Text("Auto output path: \(vm.effectiveOutputPathDescription)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }
@@ -1853,6 +1881,7 @@ struct ContentView: View {
     private func folderRow(
         label: String,
         text: Binding<String>,
+        isDisabled: Bool,
         browseAction: @escaping () -> Void,
         trailingButtonTitle: String?,
         trailingAction: (() -> Void)?,
@@ -1865,12 +1894,14 @@ struct ContentView: View {
                 .frame(width: 52, alignment: .leading)
             TextField("", text: text)
                 .textFieldStyle(.roundedBorder)
+                .disabled(isDisabled)
             Button("Browse", action: browseAction)
                 .buttonStyle(.bordered)
+                .disabled(isDisabled)
             if let trailingButtonTitle, let trailingAction {
                 Button(trailingButtonTitle, action: trailingAction)
                     .buttonStyle(.borderedProminent)
-                    .disabled(trailingDisabled)
+                    .disabled(trailingDisabled || isDisabled)
             }
         }
     }
