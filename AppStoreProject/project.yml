@@ -1,0 +1,47 @@
+name: FrameMacApp
+options:
+  createIntermediateGroups: true
+  minimumXcodeGenVersion: 2.38.0
+settings:
+  base:
+    PRODUCT_NAME: FrameMacApp
+    PRODUCT_BUNDLE_IDENTIFIER: com.arina.framephotocaption
+    MACOSX_DEPLOYMENT_TARGET: 13.0
+    SWIFT_VERSION: 6.0
+    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: 1.0.0
+    INFOPLIST_KEY_CFBundleDisplayName: Story Frame
+    INFOPLIST_KEY_CFBundleName: Story Frame
+    INFOPLIST_KEY_CFBundleExecutable: FrameMacApp
+    INFOPLIST_KEY_CFBundleIdentifier: com.arina.framephotocaption
+    INFOPLIST_KEY_CFBundleShortVersionString: 1.0.0
+    INFOPLIST_KEY_CFBundleVersion: 1
+    INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.photography
+    INFOPLIST_KEY_LSMinimumSystemVersion: 13.0
+    INFOPLIST_KEY_NSHighResolutionCapable: true
+    INFOPLIST_KEY_CFBundleIconFile: AppIcon
+targets:
+  FrameMacApp:
+    type: application
+    platform: macOS
+    deploymentTarget: "13.0"
+    sources:
+      - path: ../FrameMacApp/Sources/FrameMacApp/FrameMacApp.swift
+      - path: ../fonts
+        type: folder
+        buildPhase: resources
+      - path: ../assets/AppIcon.icns
+        buildPhase: resources
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: FrameMacApp-Info.plist
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: XA5R6SFA3K
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_ENTITLEMENTS: FrameMacApp.entitlements
+schemes:
+  FrameMacApp:
+    build:
+      targets:
+        FrameMacApp: all
