@@ -4,9 +4,10 @@ import 'package:flutter/material.dart';
 import 'preview_screen.dart';
 
 class CameraScreen extends StatefulWidget {
-  const CameraScreen({super.key, required this.cameras});
+  const CameraScreen({super.key, required this.cameras, this.startupError});
 
   final List<CameraDescription> cameras;
+  final String? startupError;
 
   @override
   State<CameraScreen> createState() => _CameraScreenState();
@@ -15,6 +16,18 @@ class CameraScreen extends StatefulWidget {
 class _CameraScreenState extends State<CameraScreen> {
   CameraController? _controller;
   bool _isTakingPhoto = false;
+  String? _cameraError;
+
+  void _showMessage(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(text),
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.fromLTRB(16, 16, 16, 72),
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -24,6 +37,9 @@ class _CameraScreenState extends State<CameraScreen> {
 
   Future<void> _setupCamera() async {
     if (widget.cameras.isEmpty) {
+      setState(() {
+        _cameraError = widget.startupError ?? 'No camera found on this device.';
+      });
       return;
     }
 
@@ -39,15 +55,24 @@ class _CameraScreenState extends State<CameraScreen> {
       imageFormatGroup: ImageFormatGroup.jpeg,
     );
 
-    await controller.initialize();
-    if (!mounted) {
-      await controller.dispose();
-      return;
-    }
+    try {
+      await controller.initialize();
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
 
-    setState(() {
-      _controller = controller;
-    });
+      setState(() {
+        _controller = controller;
+        _cameraError = null;
+      });
+    } catch (e) {
+      await controller.dispose();
+      if (!mounted) return;
+      setState(() {
+        _cameraError = 'Camera initialization failed: $e';
+      });
+    }
   }
 
   Future<void> _takePhoto() async {
@@ -70,10 +95,7 @@ class _CameraScreenState extends State<CameraScreen> {
         ),
       );
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to capture photo: $e')),
-      );
+      _showMessage('Failed to capture photo: $e');
     } finally {
       if (mounted) {
         setState(() {
@@ -93,9 +115,26 @@ class _CameraScreenState extends State<CameraScreen> {
   Widget build(BuildContext context) {
     final controller = _controller;
 
-    if (widget.cameras.isEmpty) {
-      return const Scaffold(
-        body: Center(child: Text('No camera found on this device.')),
+    if (_cameraError != null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Frame Camera')),
+        body: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                _cameraError!,
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: _setupCamera,
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
       );
     }
 

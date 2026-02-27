@@ -7,6 +7,7 @@ class FrameRenderer {
   Future<Uint8List> render({
     required Uint8List originalBytes,
     required String title,
+    required bool includeTitle,
     required String dateTimeText,
     required String locationText,
     Color backgroundColor = const Color(0xFFF8F4EC),
@@ -41,28 +42,33 @@ class FrameRenderer {
     final baselineY = topBorder + photoH + (bottomBorder * 0.16);
 
     final safeTitle = title.trim().isEmpty ? 'Untitled' : title.trim();
+    final shouldPaintTitle = includeTitle;
     final metaText = '$dateTimeText\n$locationText';
 
-    final titlePainter = TextPainter(
-      text: TextSpan(
-        text: safeTitle,
-        style: TextStyle(
-          color: const Color(0xFF1D1D1D),
-          fontSize: shortSide * 0.06,
-          fontWeight: FontWeight.w600,
-          height: 1.15,
+    double titleHeight = 0;
+    if (shouldPaintTitle) {
+      final titlePainter = TextPainter(
+        text: TextSpan(
+          text: safeTitle,
+          style: TextStyle(
+            color: const Color(0xFF1D1D1D),
+            fontSize: shortSide * 0.06,
+            fontWeight: FontWeight.w600,
+            height: 1.15,
+          ),
         ),
-      ),
-      textAlign: TextAlign.center,
-      textDirection: TextDirection.ltr,
-      maxLines: 2,
-      ellipsis: '...',
-    )..layout(minWidth: 0, maxWidth: textWidth.toDouble());
+        textAlign: TextAlign.center,
+        textDirection: TextDirection.ltr,
+        maxLines: 2,
+        ellipsis: '...',
+      )..layout(minWidth: 0, maxWidth: textWidth.toDouble());
 
-    titlePainter.paint(
-      canvas,
-      Offset((outW - titlePainter.width) / 2, baselineY.toDouble()),
-    );
+      titlePainter.paint(
+        canvas,
+        Offset((outW - titlePainter.width) / 2, baselineY.toDouble()),
+      );
+      titleHeight = titlePainter.height;
+    }
 
     final metaPainter = TextPainter(
       text: TextSpan(
@@ -80,7 +86,7 @@ class FrameRenderer {
       ellipsis: '...',
     )..layout(minWidth: 0, maxWidth: textWidth.toDouble());
 
-    final metaTop = baselineY + titlePainter.height + (shortSide * 0.02);
+    final metaTop = baselineY + titleHeight + (shouldPaintTitle ? shortSide * 0.02 : 0);
     metaPainter.paint(canvas, Offset((outW - metaPainter.width) / 2, metaTop));
 
     final finalImage = await recorder.endRecording().toImage(outW, outH);
