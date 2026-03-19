@@ -65,8 +65,33 @@ struct RenderSettings: Sendable {
 
 struct ProcessSummary: Sendable {
     let success: Int
+    let skipped: Int
+    let failed: Int
     let total: Int
-    var failed: Int { total - success }
+}
+
+enum OutputConflictAction: String, Sendable {
+    case autoRename
+    case replace
+    case ignore
+
+    var displayName: String {
+        switch self {
+        case .autoRename:
+            return "Auto-Rename"
+        case .replace:
+            return "Replace"
+        case .ignore:
+            return "Ignore"
+        }
+    }
+}
+
+struct OutputConflictPrompt: Identifiable {
+    let id = UUID()
+    let sourceFileName: String
+    let destinationFileName: String
+    let destinationPath: String
 }
 
 private struct FontCacheKey: Hashable {
@@ -433,9 +458,10 @@ enum NativeFrameProcessor {
         settings: RenderSettings,
         metadataByFilename: [String: FileRenderMetadata],
         includeFilenames: Set<String>,
+        resolveConflict: @escaping @Sendable (_ sourceURL: URL, _ destinationURL: URL) async -> OutputConflictAction,
         progress: @escaping (_ done: Int, _ total: Int) -> Void,
         log: @escaping (_ line: String) -> Void
-    ) throws -> ProcessSummary {
+    ) async throws -> ProcessSummary {
         let files = try imageFiles(in: inputDir, invalidInputCode: 2).filter { includeFilenames.contains($0.lastPathComponent) }
         try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
 
@@ -443,6 +469,8 @@ enum NativeFrameProcessor {
         progress(0, total)
 
         var success = 0
+        var skipped = 0
+        var failed = 0
         var fontCache: [FontCacheKey: CTFont] = [:]
         for (idx, fileURL) in files.enumerated() {
             let filename = fileURL.lastPathComponent
@@ -454,7 +482,7 @@ enum NativeFrameProcessor {
             let editorialAuthor = metadata?.editorialAuthor ?? settings.editorialAuthor
 
             do {
-                let out = try renderAndSave(
+                let out = try await renderAndSave(
                     srcURL: fileURL,
                     outDir: outputDir,
                     dateText: dateText,
@@ -463,19 +491,26 @@ enum NativeFrameProcessor {
                     editorialLocation: editorialLocation,
                     editorialAuthor: editorialAuthor,
                     settings: settings,
-                    fontCache: &fontCache
+                    fontCache: &fontCache,
+                    resolveConflict: resolveConflict
                 )
-                success += 1
-                log("Saved: \(out.path)")
+                if let out {
+                    success += 1
+                    log("Saved: \(out.path)")
+                } else {
+                    skipped += 1
+                    log("Skipped existing file: \(fileURL.lastPathComponent)")
+                }
             } catch {
+                failed += 1
                 log("ERROR: Failed processing \(fileURL.lastPathComponent): \(error.localizedDescription)")
             }
 
             progress(idx + 1, total)
         }
 
-        log("Done. Processed \(total) file(s), succeeded \(success), failed \(total - success).")
-        return ProcessSummary(success: success, total: total)
+        log("Done. Processed \(total) file(s), succeeded \(success), skipped \(skipped), failed \(failed).")
+        return ProcessSummary(success: success, skipped: skipped, failed: failed, total: total)
     }
 
     static func processFiles(
@@ -483,15 +518,18 @@ enum NativeFrameProcessor {
         outputDir: URL,
         settings: RenderSettings,
         metadataByFilePath: [String: FileRenderMetadata],
+        resolveConflict: @escaping @Sendable (_ sourceURL: URL, _ destinationURL: URL) async -> OutputConflictAction,
         progress: @escaping (_ done: Int, _ total: Int) -> Void,
         log: @escaping (_ line: String) -> Void
-    ) throws -> ProcessSummary {
+    ) async throws -> ProcessSummary {
         try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
 
         let total = files.count
         progress(0, total)
 
         var success = 0
+        var skipped = 0
+        var failed = 0
         var fontCache: [FontCacheKey: CTFont] = [:]
         for (idx, fileURL) in files.enumerated() {
             let metadata = metadataByFilePath[fileURL.path]
@@ -502,7 +540,7 @@ enum NativeFrameProcessor {
             let editorialAuthor = metadata?.editorialAuthor ?? settings.editorialAuthor
 
             do {
-                let out = try renderAndSave(
+                let out = try await renderAndSave(
                     srcURL: fileURL,
                     outDir: outputDir,
                     dateText: dateText,
@@ -511,19 +549,26 @@ enum NativeFrameProcessor {
                     editorialLocation: editorialLocation,
                     editorialAuthor: editorialAuthor,
                     settings: settings,
-                    fontCache: &fontCache
+                    fontCache: &fontCache,
+                    resolveConflict: resolveConflict
                 )
-                success += 1
-                log("Saved: \(out.path)")
+                if let out {
+                    success += 1
+                    log("Saved: \(out.path)")
+                } else {
+                    skipped += 1
+                    log("Skipped existing file: \(fileURL.lastPathComponent)")
+                }
             } catch {
+                failed += 1
                 log("ERROR: Failed processing \(fileURL.lastPathComponent): \(error.localizedDescription)")
             }
 
             progress(idx + 1, total)
         }
 
-        log("Done. Processed \(total) file(s), succeeded \(success), failed \(total - success).")
-        return ProcessSummary(success: success, total: total)
+        log("Done. Processed \(total) file(s), succeeded \(success), skipped \(skipped), failed \(failed).")
+        return ProcessSummary(success: success, skipped: skipped, failed: failed, total: total)
     }
 
     static func makePreviewImage(
@@ -679,8 +724,9 @@ enum NativeFrameProcessor {
         editorialLocation: String,
         editorialAuthor: String,
         settings: RenderSettings,
-        fontCache: inout [FontCacheKey: CTFont]
-    ) throws -> URL {
+        fontCache: inout [FontCacheKey: CTFont],
+        resolveConflict: @escaping @Sendable (_ sourceURL: URL, _ destinationURL: URL) async -> OutputConflictAction
+    ) async throws -> URL? {
         guard let src = CGImageSourceCreateWithURL(srcURL as CFURL, nil),
               let cg = CGImageSourceCreateImageAtIndex(src, 0, nil) else {
             throw NSError(domain: "FrameMacApp", code: 10, userInfo: [NSLocalizedDescriptionKey: "Could not load image"])
@@ -696,7 +742,13 @@ enum NativeFrameProcessor {
             settings: settings,
             fontCache: &fontCache
         )
-        return try writeOutputImage(outCG: outCG, srcURL: srcURL, outDir: outDir, srcProps: srcProps)
+        return try await writeOutputImage(
+            outCG: outCG,
+            srcURL: srcURL,
+            outDir: outDir,
+            srcProps: srcProps,
+            resolveConflict: resolveConflict
+        )
     }
 
     private static func renderImage(
@@ -1190,10 +1242,29 @@ enum NativeFrameProcessor {
         ctx.restoreGState()
     }
 
-    private static func writeOutputImage(outCG: CGImage, srcURL: URL, outDir: URL, srcProps: [CFString: Any]?) throws -> URL {
+    private static func writeOutputImage(
+        outCG: CGImage,
+        srcURL: URL,
+        outDir: URL,
+        srcProps: [CFString: Any]?,
+        resolveConflict: @escaping @Sendable (_ sourceURL: URL, _ destinationURL: URL) async -> OutputConflictAction
+    ) async throws -> URL? {
         let suffix = "." + srcURL.pathExtension.lowercased()
-        let (finalURL, uti, props) = outputSpec(srcURL: srcURL, outDir: outDir, suffix: suffix)
+        let (baseURL, uti, props) = outputSpec(srcURL: srcURL, outDir: outDir, suffix: suffix)
+        let finalURL = try await resolvedOutputURL(
+            baseURL: baseURL,
+            srcURL: srcURL,
+            resolveConflict: resolveConflict
+        )
+        guard let finalURL else {
+            return nil
+        }
         let allProps = mergedImageProperties(srcProps: srcProps, outputProps: props)
+        let fm = FileManager.default
+
+        if fm.fileExists(atPath: finalURL.path) {
+            try fm.removeItem(at: finalURL)
+        }
 
         guard let dest = CGImageDestinationCreateWithURL(finalURL as CFURL, uti as CFString, 1, nil) else {
             throw NSError(domain: "FrameMacApp", code: 13, userInfo: [NSLocalizedDescriptionKey: "Could not create output destination"])
@@ -1204,6 +1275,27 @@ enum NativeFrameProcessor {
             throw NSError(domain: "FrameMacApp", code: 14, userInfo: [NSLocalizedDescriptionKey: "Could not write output file"])
         }
         return finalURL
+    }
+
+    private static func resolvedOutputURL(
+        baseURL: URL,
+        srcURL: URL,
+        resolveConflict: @escaping @Sendable (_ sourceURL: URL, _ destinationURL: URL) async -> OutputConflictAction
+    ) async throws -> URL? {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: baseURL.path) else {
+            return baseURL
+        }
+
+        let action = await resolveConflict(srcURL, baseURL)
+        switch action {
+        case .autoRename:
+            return uniqueOutputURL(baseURL: baseURL)
+        case .replace:
+            return baseURL
+        case .ignore:
+            return nil
+        }
     }
 
     private static func mergedImageProperties(srcProps: [CFString: Any]?, outputProps: [CFString: Any]) -> [CFString: Any] {
@@ -1226,50 +1318,45 @@ enum NativeFrameProcessor {
 
     private static func outputSpec(srcURL: URL, outDir: URL, suffix: String) -> (URL, String, [CFString: Any]) {
         if suffix == ".jpg" || suffix == ".jpeg" {
-            let out = uniqueOutputURL(
-                outDir: outDir,
-                baseName: srcURL.deletingPathExtension().lastPathComponent,
-                ext: "jpg"
-            )
+            let out = outDir.appendingPathComponent(
+                srcURL.deletingPathExtension().lastPathComponent
+            ).appendingPathExtension("jpg")
             return (out, UTType.jpeg.identifier, [kCGImageDestinationLossyCompressionQuality: 1.0])
         }
 
         if suffix == ".tif" || suffix == ".tiff" {
-            let out = uniqueOutputURL(
-                outDir: outDir,
-                baseName: srcURL.deletingPathExtension().lastPathComponent,
-                ext: "tif"
-            )
+            let out = outDir.appendingPathComponent(
+                srcURL.deletingPathExtension().lastPathComponent
+            ).appendingPathExtension("tif")
             return (out, UTType.tiff.identifier, [kCGImagePropertyTIFFCompression: 5])
         }
 
         if suffix == ".png" {
-            let out = uniqueOutputURL(
-                outDir: outDir,
-                baseName: srcURL.deletingPathExtension().lastPathComponent,
-                ext: "png"
-            )
+            let out = outDir.appendingPathComponent(
+                srcURL.deletingPathExtension().lastPathComponent
+            ).appendingPathExtension("png")
             return (out, UTType.png.identifier, [:])
         }
 
-        let out = uniqueOutputURL(
-            outDir: outDir,
-            baseName: srcURL.deletingPathExtension().lastPathComponent,
-            ext: "jpg"
-        )
+        let out = outDir.appendingPathComponent(
+            srcURL.deletingPathExtension().lastPathComponent
+        ).appendingPathExtension("jpg")
         return (out, UTType.jpeg.identifier, [kCGImageDestinationLossyCompressionQuality: 1.0])
     }
 
-    private static func uniqueOutputURL(outDir: URL, baseName: String, ext: String) -> URL {
+    private static func uniqueOutputURL(baseURL: URL) -> URL {
         let fm = FileManager.default
-        var candidate = outDir.appendingPathComponent("\(baseName).\(ext)")
-        if !fm.fileExists(atPath: candidate.path) {
-            return candidate
+        guard fm.fileExists(atPath: baseURL.path) else {
+            return baseURL
         }
 
+        let ext = baseURL.pathExtension
+        let stem = baseURL.deletingPathExtension().lastPathComponent
+        let dir = baseURL.deletingLastPathComponent()
         var index = 1
+
         while true {
-            candidate = outDir.appendingPathComponent("\(baseName)_\(index).\(ext)")
+            let candidate = dir.appendingPathComponent("\(stem)_\(index)").appendingPathExtension(ext)
             if !fm.fileExists(atPath: candidate.path) {
                 return candidate
             }
@@ -1527,6 +1614,8 @@ final class FrameViewModel: ObservableObject {
     @Published private(set) var selectedInputFiles: [URL] = []
     @Published var isShowingSavePresetSheet = false
     @Published var isShowingManagePresetsSheet = false
+    @Published var pendingOutputConflict: OutputConflictPrompt?
+    @Published var applyOutputConflictChoiceToAll = false
 
     @Published var rows: [MetadataRow] = []
     @Published var selectedRows: Set<String> = []
@@ -1543,6 +1632,8 @@ final class FrameViewModel: ObservableObject {
     private var lastCheckboxSelectionRowID: String?
     private var scanSessionID = UUID()
     private var previewedRowID: String?
+    private var outputConflictContinuation: CheckedContinuation<OutputConflictAction, Never>?
+    private var outputConflictActionForRemainingFiles: OutputConflictAction?
 
     init() {
         let fm = FileManager.default
@@ -1718,6 +1809,9 @@ final class FrameViewModel: ObservableObject {
         persistPathsAndSettings()
 
         isRunning = true
+        outputConflictActionForRemainingFiles = nil
+        pendingOutputConflict = nil
+        applyOutputConflictChoiceToAll = false
         progress = 0
         status = "Running..."
         let outputPath = effectiveOutputDirPath()
@@ -1780,11 +1874,14 @@ final class FrameViewModel: ObservableObject {
             let stream = AsyncStream<ProcessEvent> { continuation in
                 Task.detached(priority: .userInitiated) {
                     do {
-                        let summary = try NativeFrameProcessor.processFiles(
+                        let summary = try await NativeFrameProcessor.processFiles(
                             files: selectedFiles,
                             outputDir: output,
                             settings: settings,
                             metadataByFilePath: finalMetadata,
+                            resolveConflict: { sourceURL, destinationURL in
+                                await self.resolveOutputConflict(sourceURL: sourceURL, destinationURL: destinationURL)
+                            },
                             progress: { done, total in
                                 continuation.yield(.progress(done, total))
                             },
@@ -1825,13 +1922,16 @@ final class FrameViewModel: ObservableObject {
             }
 
             progress = summary.total > 0 ? 1.0 : 0.0
-            status = "Done: \(summary.success) ok, \(summary.failed) failed"
+            status = "Done: \(summary.success) saved, \(summary.skipped) skipped, \(summary.failed) failed"
         } catch {
             status = "Run failed: \(error.localizedDescription)"
             appendLog("ERROR: \(error.localizedDescription)")
         }
 
         isRunning = false
+        outputConflictActionForRemainingFiles = nil
+        pendingOutputConflict = nil
+        applyOutputConflictChoiceToAll = false
     }
 
     func reverseSelectedEditedFiles() {
@@ -2032,6 +2132,17 @@ final class FrameViewModel: ObservableObject {
         persistPathsAndSettings()
     }
 
+    func answerOutputConflict(_ action: OutputConflictAction) {
+        let applyToAll = applyOutputConflictChoiceToAll
+        if applyToAll {
+            outputConflictActionForRemainingFiles = action
+        }
+        pendingOutputConflict = nil
+        applyOutputConflictChoiceToAll = false
+        outputConflictContinuation?.resume(returning: action)
+        outputConflictContinuation = nil
+    }
+
     var effectiveOutputPathDescription: String {
         effectiveOutputDirPath()
     }
@@ -2107,6 +2218,21 @@ final class FrameViewModel: ObservableObject {
 
     private func appendLog(_ text: String) {
         logs += text + "\n"
+    }
+
+    private func resolveOutputConflict(sourceURL: URL, destinationURL: URL) async -> OutputConflictAction {
+        if let remembered = outputConflictActionForRemainingFiles {
+            return remembered
+        }
+
+        return await withCheckedContinuation { continuation in
+            outputConflictContinuation = continuation
+            pendingOutputConflict = OutputConflictPrompt(
+                sourceFileName: sourceURL.lastPathComponent,
+                destinationFileName: destinationURL.lastPathComponent,
+                destinationPath: destinationURL.path
+            )
+        }
     }
 
     private func makeRow(
@@ -2407,6 +2533,9 @@ struct ContentView: View {
         }
         .sheet(isPresented: $vm.isShowingManagePresetsSheet) {
             managePresetsSheet
+        }
+        .sheet(item: $vm.pendingOutputConflict) { conflict in
+            outputConflictSheet(conflict)
         }
     }
 
@@ -2729,6 +2858,35 @@ struct ContentView: View {
         }
         .padding(22)
         .frame(width: 380)
+    }
+
+    private func outputConflictSheet(_ conflict: OutputConflictPrompt) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("File Already Exists")
+                .font(.title3.weight(.semibold))
+            Text("A rendered file for `\(conflict.sourceFileName)` already exists in the output folder.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 10) {
+                settingsValueRow(title: "Existing file", value: conflict.destinationFileName)
+                labeledValue(title: "Path", value: conflict.destinationPath, useMonospaced: true)
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                Toggle("Apply to all remaining conflicts", isOn: $vm.applyOutputConflictChoiceToAll)
+                    .toggleStyle(.checkbox)
+
+                HStack(spacing: 10) {
+                    Button("Auto-Rename") { vm.answerOutputConflict(.autoRename) }
+                    Button("Replace") { vm.answerOutputConflict(.replace) }
+                    Button("Ignore") { vm.answerOutputConflict(.ignore) }
+                }
+            }
+        }
+        .padding(22)
+        .frame(width: 520)
+        .interactiveDismissDisabled()
     }
 
     private var filesSection: some View {
