@@ -110,6 +110,7 @@ private struct FrameStyleDefinition {
     let canvasColor: CGColor
     let textColor: CGColor
     let cornerRadiusFactor: CGFloat
+    let imageScale: CGFloat
     let imageShadow: FrameShadowDefinition?
     let imageStrokeColor: CGColor?
     let imageStrokeWidth: CGFloat
@@ -1096,6 +1097,7 @@ enum NativeFrameProcessor {
                 canvasColor: CGColor(red: 1, green: 1, blue: 1, alpha: 1),
                 textColor: CGColor(gray: 0.16, alpha: 1),
                 cornerRadiusFactor: 0,
+                imageScale: 1,
                 imageShadow: nil,
                 imageStrokeColor: nil,
                 imageStrokeWidth: 0,
@@ -1109,6 +1111,7 @@ enum NativeFrameProcessor {
                 canvasColor: CGColor(red: 1, green: 1, blue: 1, alpha: 1),
                 textColor: CGColor(gray: 0.16, alpha: 1),
                 cornerRadiusFactor: 0,
+                imageScale: 1,
                 imageShadow: FrameShadowDefinition(
                     offset: CGSize(width: 0, height: -14),
                     blur: 28,
@@ -1126,6 +1129,7 @@ enum NativeFrameProcessor {
                 canvasColor: CGColor(red: 1, green: 1, blue: 1, alpha: 1),
                 textColor: CGColor(gray: 0.16, alpha: 1),
                 cornerRadiusFactor: baseCorner,
+                imageScale: 1,
                 imageShadow: nil,
                 imageStrokeColor: CGColor(gray: 0.86, alpha: 1),
                 imageStrokeWidth: 1,
@@ -1139,6 +1143,7 @@ enum NativeFrameProcessor {
                 canvasColor: CGColor(red: 0.96, green: 0.94, blue: 0.89, alpha: 1),
                 textColor: CGColor(red: 0.22, green: 0.19, blue: 0.15, alpha: 1),
                 cornerRadiusFactor: baseCorner * 0.55,
+                imageScale: 1,
                 imageShadow: FrameShadowDefinition(
                     offset: CGSize(width: 0, height: -8),
                     blur: 18,
@@ -1156,6 +1161,7 @@ enum NativeFrameProcessor {
                 canvasColor: CGColor(red: 0.99, green: 0.99, blue: 0.98, alpha: 1),
                 textColor: CGColor(gray: 0.18, alpha: 1),
                 cornerRadiusFactor: baseCorner * 0.28,
+                imageScale: 0.94,
                 imageShadow: FrameShadowDefinition(
                     offset: CGSize(width: 0, height: -12),
                     blur: 24,
@@ -1173,6 +1179,7 @@ enum NativeFrameProcessor {
                 canvasColor: CGColor(red: 0.972, green: 0.972, blue: 0.968, alpha: 1),
                 textColor: CGColor(gray: 0.24, alpha: 1),
                 cornerRadiusFactor: 0,
+                imageScale: 1,
                 imageShadow: nil,
                 imageStrokeColor: CGColor(gray: 0.78, alpha: 1),
                 imageStrokeWidth: 2,
@@ -1195,8 +1202,23 @@ enum NativeFrameProcessor {
         style: FrameStyleDefinition,
         context ctx: CGContext
     ) {
-        let radius = min(style.cornerRadiusFactor, min(rect.width, rect.height) * 0.5)
-        let rotatedRect = CGRect(x: -rect.width / 2, y: -rect.height / 2, width: rect.width, height: rect.height)
+        let rotationRadians = style.imageRotationDegrees * .pi / 180
+        let absCos = abs(cos(rotationRadians))
+        let absSin = abs(sin(rotationRadians))
+        let fittedScale = min(
+            rect.width / max(1, rect.width * absCos + rect.height * absSin),
+            rect.height / max(1, rect.width * absSin + rect.height * absCos)
+        )
+        let finalScale = min(1, fittedScale * style.imageScale)
+        let fittedWidth = rect.width * finalScale
+        let fittedHeight = rect.height * finalScale
+        let radius = min(style.cornerRadiusFactor, min(fittedWidth, fittedHeight) * 0.5)
+        let rotatedRect = CGRect(
+            x: -fittedWidth / 2,
+            y: -fittedHeight / 2,
+            width: fittedWidth,
+            height: fittedHeight
+        )
         let imagePath = CGPath(
             roundedRect: rotatedRect,
             cornerWidth: radius,
@@ -1208,7 +1230,7 @@ enum NativeFrameProcessor {
         ctx.translateBy(x: rect.midX, y: rect.midY)
 
         if style.imageRotationDegrees != 0 {
-            ctx.rotate(by: style.imageRotationDegrees * .pi / 180)
+            ctx.rotate(by: rotationRadians)
         }
 
         if let shadow = style.imageShadow {
