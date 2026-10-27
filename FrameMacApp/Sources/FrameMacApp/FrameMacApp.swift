@@ -582,8 +582,9 @@ enum NativeFrameProcessor {
             border = max(0, Int(borderInput.rounded()))
             bottom = max(0, Int(bottomInput.rounded()))
         case .percent:
-            border = max(0, Int((Double(w) * Double(borderInput) / 100.0).rounded()))
-            bottom = max(0, Int((Double(w) * Double(bottomInput) / 100.0).rounded()))
+            let shortEdge = Double(min(w, h))
+            border = max(0, Int((shortEdge * Double(borderInput) / 100.0).rounded()))
+            bottom = max(0, Int((shortEdge * Double(bottomInput) / 100.0).rounded()))
         }
         let pad = max(0, settings.pad)
 
@@ -1052,15 +1053,26 @@ final class FrameViewModel: ObservableObject {
     @Published var isScanning = false
     @Published var isRunning = false
     private var namedSettings: [String: SavedSettingPreset] = [:]
+    
+    private static func sanitizeDirectoryPreference(_ path: String?) -> String {
+        guard let raw = path?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return ""
+        }
+        // Avoid pre-seeding sandbox container paths that confuse App Store reviewers/users.
+        if raw.contains("/Library/Containers/") {
+            return ""
+        }
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: raw, isDirectory: &isDir), isDir.boolValue {
+            return raw
+        }
+        return ""
+    }
 
     init() {
-        let fm = FileManager.default
         let defaults = UserDefaults.standard
-        let picturesPath = fm.homeDirectoryForCurrentUser
-            .appendingPathComponent("Pictures")
-            .path
-        inputDir = defaults.string(forKey: Self.inputDirKey) ?? picturesPath
-        outputDir = defaults.string(forKey: Self.outputDirKey) ?? picturesPath
+        inputDir = Self.sanitizeDirectoryPreference(defaults.string(forKey: Self.inputDirKey))
+        outputDir = Self.sanitizeDirectoryPreference(defaults.string(forKey: Self.outputDirKey))
         autoUseFramedSubfolder = defaults.bool(forKey: Self.autoUseFramedSubfolderKey)
         if let modeRaw = defaults.string(forKey: Self.borderModeKey),
            let mode = BorderMode(rawValue: modeRaw) {
@@ -1104,6 +1116,10 @@ final class FrameViewModel: ObservableObject {
     func chooseInputDir() {
         if let selected = pickDirectory(startingAt: inputDir) {
             inputDir = selected
+            // Keep output user-controlled, but make first-run easier after explicit input choice.
+            if outputDir.isEmpty {
+                outputDir = selected
+            }
             persistPathsAndSettings()
             Task { await scanMetadata() }
         }
@@ -1118,6 +1134,14 @@ final class FrameViewModel: ObservableObject {
 
     func scanMetadata() async {
         guard !isScanning else { return }
+        guard !inputDir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            status = "Choose an input folder to continue"
+            rows = []
+            selectedRows = []
+            previewImage = nil
+            previewFilename = ""
+            return
+        }
         isScanning = true
         status = "Scanning metadata..."
         rows = []
@@ -1149,6 +1173,14 @@ final class FrameViewModel: ObservableObject {
 
     func runProcessing() async {
         guard !isRunning else { return }
+        guard !inputDir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            status = "Choose an input folder to continue"
+            return
+        }
+        guard !outputDir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            status = "Choose an output folder to continue"
+            return
+        }
 
         guard !selectedRows.isEmpty else {
             status = "No files selected"
@@ -1360,7 +1392,14 @@ final class FrameViewModel: ObservableObject {
     }
 
     var effectiveOutputPathDescription: String {
-        effectiveOutputDirPath()
+        if autoUseFramedSubfolder {
+            return "Framed folder inside selected Input folder"
+        }
+        return displayPath(outputDir)
+    }
+
+    func displayPath(_ path: String) -> String {
+        NSString(string: path).abbreviatingWithTildeInPath
     }
 
     func saveCurrentSettingsAsPreset() {
@@ -1534,7 +1573,10 @@ final class FrameViewModel: ObservableObject {
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
-        panel.directoryURL = URL(fileURLWithPath: path)
+        let candidate = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !candidate.isEmpty {
+            panel.directoryURL = URL(fileURLWithPath: candidate)
+        }
         return panel.runModal() == .OK ? panel.url?.path : nil
     }
 
@@ -1554,15 +1596,8 @@ struct ContentView: View {
 
     var body: some View {
         ZStack {
-            LinearGradient(
-                colors: [
-                    Color(red: 0.97, green: 0.98, blue: 0.99),
-                    Color(red: 0.95, green: 0.96, blue: 0.98),
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
+            Color(NSColor.windowBackgroundColor)
+                .ignoresSafeArea()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
@@ -1584,18 +1619,22 @@ struct ContentView: View {
             vm.saveLocationPreferences()
         }
         .task {
-            await vm.scanMetadata()
+            if !vm.inputDir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                await vm.scanMetadata()
+            } else {
+                vm.status = "Choose an input folder to continue"
+            }
         }
     }
 
     private var headerSection: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Frame Studio")
+                Text("Story Frame")
                     .font(.system(size: 27, weight: .semibold))
                 Text("Batch frame images with editable metadata and clean typography")
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.primary)
             }
 
             Spacer()
@@ -1612,7 +1651,7 @@ struct ContentView: View {
                     .frame(width: 230)
                 Text(vm.status)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(statusColor)
             }
         }
     }
@@ -1642,10 +1681,18 @@ struct ContentView: View {
                 if vm.autoUseFramedSubfolder {
                     Text("Auto output path: \(vm.effectiveOutputPathDescription)")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.primary)
                 }
             }
         }
+    }
+    
+    private var statusColor: Color {
+        let lower = vm.status.lowercased()
+        if lower.contains("failed") || lower.contains("invalid") || lower.contains("error") {
+            return .red
+        }
+        return .primary
     }
 
     private var settingsSection: some View {
@@ -1941,17 +1988,17 @@ struct ContentView: View {
         HStack(spacing: 6) {
             Text(label)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.primary)
             Text("\(value)")
                 .font(.caption.weight(.semibold))
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(Color.white.opacity(0.8))
+        .background(Color(NSColor.controlBackgroundColor))
         .clipShape(Capsule())
         .overlay(
             Capsule()
-                .stroke(Color.black.opacity(0.08), lineWidth: 1)
+                .stroke(Color(NSColor.separatorColor), lineWidth: 1)
         )
     }
 
@@ -1967,11 +2014,21 @@ struct ContentView: View {
         HStack(spacing: 10) {
             Text(label)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.primary)
                 .frame(width: 52, alignment: .leading)
-            TextField("", text: text)
-                .textFieldStyle(.roundedBorder)
-                .disabled(isDisabled)
+            Text(vm.displayPath(text.wrappedValue))
+                .font(.body)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color(NSColor.textBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Color(NSColor.separatorColor), lineWidth: 1)
+                )
             Button("Browse", action: browseAction)
                 .buttonStyle(.bordered)
                 .disabled(isDisabled)
@@ -1990,11 +2047,11 @@ struct ContentView: View {
             content()
         }
         .padding(14)
-        .background(Color.white.opacity(0.9))
+        .background(Color(NSColor.controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.black.opacity(0.08), lineWidth: 1)
+                .stroke(Color(NSColor.separatorColor), lineWidth: 1)
         )
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -2003,15 +2060,17 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 5) {
             Text(label)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.primary)
             content()
         }
     }
 }
 @main
 struct FrameMacApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     var body: some Scene {
-        WindowGroup("Frame Mac App") {
+        WindowGroup("Story Frame") {
             ContentView()
                 .frame(minWidth: 980, minHeight: 720)
         }
@@ -2021,8 +2080,13 @@ struct FrameMacApp: App {
             CommandGroup(replacing: .undoRedo) {}
             CommandGroup(replacing: .toolbar) {}
             CommandGroup(replacing: .sidebar) {}
-            CommandGroup(replacing: .windowList) {}
             CommandGroup(replacing: .help) {}
         }
+    }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        true
     }
 }

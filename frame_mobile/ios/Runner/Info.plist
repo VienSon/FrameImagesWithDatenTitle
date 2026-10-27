@@ -25,13 +25,17 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSCameraUsageDescription</key>
-	<string>Need camera access to take photos.</string>
+	<string>Postcard Photo needs camera access so you can capture photos to frame and save.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Need location to add place name to photo frame.</string>
+	<string>Location is optional and used only when you choose to add a place label to your photo.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Location is optional and used only when you choose to add a place label to your photo.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>Location is optional and used only when you choose to add a place label to your photo.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>Need photo library access to save framed photos.</string>
+	<string>Postcard Photo needs photo library access to save your framed images.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Need photo library access to save framed photos.</string>
+	<string>Postcard Photo needs photo library access to save your framed images.</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

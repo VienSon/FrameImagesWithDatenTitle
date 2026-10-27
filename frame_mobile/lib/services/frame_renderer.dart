@@ -43,7 +43,8 @@ class FrameRenderer {
 
     final safeTitle = title.trim().isEmpty ? 'Untitled' : title.trim();
     final shouldPaintTitle = includeTitle;
-    final metaText = '$dateTimeText\n$locationText';
+    final safeLocation = locationText.trim();
+    final metaText = safeLocation.isEmpty ? dateTimeText : '$dateTimeText\n$safeLocation';
 
     double titleHeight = 0;
     if (shouldPaintTitle) {

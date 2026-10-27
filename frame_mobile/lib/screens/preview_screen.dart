@@ -20,6 +20,7 @@ class PreviewScreen extends StatefulWidget {
 
 class _PreviewScreenState extends State<PreviewScreen> {
   static const _includeTitleKey = 'include_title';
+  static const _includeLocationKey = 'include_location';
   static const _rememberTitleKey = 'remember_last_title';
   static const _lastTitleKey = 'last_title';
 
@@ -28,9 +29,10 @@ class _PreviewScreenState extends State<PreviewScreen> {
   final _frameRenderer = FrameRenderer();
 
   late final DateTime _capturedAt;
-  String _locationLabel = 'Loading location...';
+  String _locationLabel = 'Location not added';
   bool _saving = false;
   bool _includeTitle = true;
+  bool _includeLocation = false;
   bool _rememberLastTitle = false;
 
   void _showMessage(String text) {
@@ -49,28 +51,33 @@ class _PreviewScreenState extends State<PreviewScreen> {
     super.initState();
     _capturedAt = DateTime.now();
     _loadTitlePreferences();
-    _loadLocation();
   }
 
   Future<void> _loadTitlePreferences() async {
     final prefs = await SharedPreferences.getInstance();
     final includeTitle = prefs.getBool(_includeTitleKey) ?? true;
+    final includeLocation = prefs.getBool(_includeLocationKey) ?? false;
     final remember = prefs.getBool(_rememberTitleKey) ?? false;
     final lastTitle = prefs.getString(_lastTitleKey) ?? '';
 
     if (!mounted) return;
     setState(() {
       _includeTitle = includeTitle;
+      _includeLocation = includeLocation;
       _rememberLastTitle = remember;
       if (remember && lastTitle.trim().isNotEmpty) {
         _titleController.text = lastTitle;
       }
     });
+    if (includeLocation) {
+      await _loadLocation();
+    }
   }
 
   Future<void> _persistTitlePreferences() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_includeTitleKey, _includeTitle);
+    await prefs.setBool(_includeLocationKey, _includeLocation);
     await prefs.setBool(_rememberTitleKey, _rememberLastTitle);
     if (_rememberLastTitle && _includeTitle) {
       await prefs.setString(_lastTitleKey, _titleController.text.trim());
@@ -80,6 +87,10 @@ class _PreviewScreenState extends State<PreviewScreen> {
   }
 
   Future<void> _loadLocation() async {
+    if (!_includeLocation) return;
+    setState(() {
+      _locationLabel = 'Loading location...';
+    });
     final result = await _locationService.getLocationLabel();
     if (!mounted) return;
 
@@ -98,13 +109,27 @@ class _PreviewScreenState extends State<PreviewScreen> {
     try {
       final photoBytes = await File(widget.imagePath).readAsBytes();
       final dateTimeText = DateFormat('yyyy-MM-dd HH:mm').format(_capturedAt);
+      var locationText = '';
+      if (_includeLocation) {
+        if (_locationLabel == 'Location not added' || _locationLabel == 'Loading location...') {
+          final result = await _locationService.getLocationLabel();
+          locationText = result.label;
+          if (mounted) {
+            setState(() {
+              _locationLabel = result.label;
+            });
+          }
+        } else {
+          locationText = _locationLabel;
+        }
+      }
 
       final outputBytes = await _frameRenderer.render(
         originalBytes: photoBytes,
         title: _includeTitle ? _titleController.text : '',
         includeTitle: _includeTitle,
         dateTimeText: dateTimeText,
-        locationText: _locationLabel,
+        locationText: locationText,
       );
 
       final hasPermission = await _ensurePhotoPermission();
@@ -169,6 +194,7 @@ class _PreviewScreenState extends State<PreviewScreen> {
   @override
   Widget build(BuildContext context) {
     final dateTimeText = DateFormat('yyyy-MM-dd HH:mm').format(_capturedAt);
+    final metaText = _includeLocation ? '$dateTimeText\n$_locationLabel' : dateTimeText;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Add Title & Save')),
@@ -178,7 +204,7 @@ class _PreviewScreenState extends State<PreviewScreen> {
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.all(16),
-              child: Container(
+                child: Container(
                   color: const Color(0xFFF8F4EC),
                   child: Column(
                     children: [
@@ -212,7 +238,7 @@ class _PreviewScreenState extends State<PreviewScreen> {
                               const SizedBox(height: 8),
                             ],
                             Text(
-                              '$dateTimeText\n$_locationLabel',
+                              metaText,
                               style: const TextStyle(fontSize: 13),
                               textAlign: TextAlign.center,
                               maxLines: 3,
@@ -225,6 +251,23 @@ class _PreviewScreenState extends State<PreviewScreen> {
                   ),
                 ),
               ),
+            ),
+            SwitchListTile.adaptive(
+              title: const Text('Include location'),
+              contentPadding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+              value: _includeLocation,
+              onChanged: (value) async {
+                setState(() {
+                  _includeLocation = value;
+                  if (!value) {
+                    _locationLabel = 'Location not added';
+                  }
+                });
+                await _persistTitlePreferences();
+                if (value) {
+                  await _loadLocation();
+                }
+              },
             ),
             SwitchListTile.adaptive(
               title: const Text('With title'),

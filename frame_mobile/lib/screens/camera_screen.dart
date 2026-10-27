@@ -1,5 +1,6 @@
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'preview_screen.dart';
 
@@ -14,9 +15,13 @@ class CameraScreen extends StatefulWidget {
 }
 
 class _CameraScreenState extends State<CameraScreen> {
+  static const _preferredLensKey = 'preferred_camera_lens';
+
   CameraController? _controller;
   bool _isTakingPhoto = false;
   String? _cameraError;
+  CameraLensDirection _activeLens = CameraLensDirection.back;
+  bool _isSwitchingCamera = false;
 
   void _showMessage(String text) {
     if (!mounted) return;
@@ -32,10 +37,45 @@ class _CameraScreenState extends State<CameraScreen> {
   @override
   void initState() {
     super.initState();
-    _setupCamera();
+    _initializeCameraPreference();
   }
 
-  Future<void> _setupCamera() async {
+  Future<void> _initializeCameraPreference() async {
+    final prefs = await SharedPreferences.getInstance();
+    final stored = prefs.getString(_preferredLensKey);
+    final preferredLens = stored == CameraLensDirection.front.name
+        ? CameraLensDirection.front
+        : CameraLensDirection.back;
+    if (!mounted) return;
+    await _setupCamera(preferredLens);
+  }
+
+  Future<void> _savePreferredLens(CameraLensDirection lens) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_preferredLensKey, lens.name);
+  }
+
+  int _cameraPriority(CameraDescription camera, CameraLensDirection lensDirection) {
+    if (camera.lensDirection != lensDirection) {
+      return 1000;
+    }
+
+    if (lensDirection != CameraLensDirection.back) {
+      return 0;
+    }
+
+    final name = camera.name.toLowerCase();
+    // Prefer the main 1x camera and avoid ultra-wide/macro lenses.
+    if (name.contains('ultra') || name.contains('0.5') || name.contains('macro')) {
+      return 100;
+    }
+    if (name.contains('tele')) {
+      return 50;
+    }
+    return 0;
+  }
+
+  Future<void> _setupCamera([CameraLensDirection? preferredLens]) async {
     if (widget.cameras.isEmpty) {
       setState(() {
         _cameraError = widget.startupError ?? 'No camera found on this device.';
@@ -43,10 +83,21 @@ class _CameraScreenState extends State<CameraScreen> {
       return;
     }
 
-    final selected = widget.cameras.firstWhere(
-      (camera) => camera.lensDirection == CameraLensDirection.back,
-      orElse: () => widget.cameras.first,
-    );
+    final requestedLens = preferredLens ?? _activeLens;
+    final hasRequestedLens = widget.cameras.any((camera) => camera.lensDirection == requestedLens);
+    final selectedLens = hasRequestedLens ? requestedLens : CameraLensDirection.back;
+
+    final sorted = [...widget.cameras]
+      ..sort((a, b) => _cameraPriority(a, selectedLens).compareTo(_cameraPriority(b, selectedLens)));
+    final selected = sorted.first;
+
+    final previousController = _controller;
+    if (mounted) {
+      setState(() {
+        _controller = null;
+      });
+    }
+    await previousController?.dispose();
 
     final controller = CameraController(
       selected,
@@ -65,13 +116,45 @@ class _CameraScreenState extends State<CameraScreen> {
       setState(() {
         _controller = controller;
         _cameraError = null;
+        _activeLens = selected.lensDirection;
       });
+      await _savePreferredLens(selected.lensDirection);
     } catch (e) {
       await controller.dispose();
       if (!mounted) return;
       setState(() {
         _cameraError = 'Camera initialization failed: $e';
       });
+    }
+  }
+
+  bool get _canSwitchCamera {
+    final hasFront = widget.cameras.any((camera) => camera.lensDirection == CameraLensDirection.front);
+    final hasBack = widget.cameras.any((camera) => camera.lensDirection == CameraLensDirection.back);
+    return hasFront && hasBack;
+  }
+
+  Future<void> _switchCamera() async {
+    if (_isSwitchingCamera || _isTakingPhoto || !_canSwitchCamera) {
+      return;
+    }
+
+    final nextLens = _activeLens == CameraLensDirection.back
+        ? CameraLensDirection.front
+        : CameraLensDirection.back;
+
+    setState(() {
+      _isSwitchingCamera = true;
+    });
+
+    try {
+      await _setupCamera(nextLens);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSwitchingCamera = false;
+        });
+      }
     }
   }
 
@@ -145,7 +228,17 @@ class _CameraScreenState extends State<CameraScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Frame Camera')),
+      appBar: AppBar(
+        title: const Text('Frame Camera'),
+        actions: [
+          if (_canSwitchCamera)
+            IconButton(
+              onPressed: _isSwitchingCamera ? null : _switchCamera,
+              icon: const Icon(Icons.cameraswitch_rounded),
+              tooltip: 'Switch camera',
+            ),
+        ],
+      ),
       body: Column(
         children: [
           Expanded(
